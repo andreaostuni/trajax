@@ -7,4 +7,5 @@ matplotlib
 optax
 tqdm
 brax
+cvxpy
 git+https://github.com/google/trajax

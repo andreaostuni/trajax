@@ -289,7 +289,7 @@ class ShootSQP(solver_base.TrajectoryOptimizationSolver):
         primals, duals, Rho, alpha, dU, ddp_errs = self._do_step(
             primals, duals, Rho, qp_params, params, self.it)
       except Exception:  # pylint: disable=broad-except
-        logging.info("Error - QP problem infeasible or other error!")
+        logging.exception("Error - QP problem infeasible or other error!")
         status = Status.ERROR
         continue
       if do_log:

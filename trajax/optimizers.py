@@ -70,1314 +70,1614 @@ pad = lambda A: np.vstack((A, np.zeros((1,) + A.shape[1:])))
 
 
 def _pytree_zeros_like(tree):
-  return jax.tree_map(np.zeros_like, tree)
+    return jax.tree.map(np.zeros_like, tree)
 
 
 def _pytree_scale(tree, scale):
-  return jax.tree_map(lambda leaf: scale * leaf, tree)
+    return jax.tree.map(lambda leaf: scale * leaf, tree)
 
 
 def _pytree_negate(tree):
-  return _pytree_scale(tree, -1.0)
+    return _pytree_scale(tree, -1.0)
 
 
 def _pytree_add(tree0, tree1):
-  return jax.tree_map(lambda x, y: x + y, tree0, tree1)
+    return jax.tree.map(lambda x, y: x + y, tree0, tree1)
 
 
 def vectorize(fun, argnums=3):
-  """Returns a jitted and vectorized version of the input function.
+    """Returns a jitted and vectorized version of the input function.
 
-  See https://jax.readthedocs.io/en/latest/jax.html#jax.vmap
+    See https://jax.readthedocs.io/en/latest/jax.html#jax.vmap
 
-  Args:
-    fun: a numpy function f(*args) to be mapped over.
-    argnums: number of leading arguments of fun to vectorize.
+    Args:
+      fun: a numpy function f(*args) to be mapped over.
+      argnums: number of leading arguments of fun to vectorize.
 
-  Returns:
-    Vectorized/Batched function with arguments corresponding to fun, but extra
-    batch dimension in axis 0 for first argnums arguments (x, u, t typically).
-    Remaining arguments are not batched.
-  """
+    Returns:
+      Vectorized/Batched function with arguments corresponding to fun, but extra
+      batch dimension in axis 0 for first argnums arguments (x, u, t typically).
+      Remaining arguments are not batched.
+    """
 
-  def vfun(*args):
-    _fun = lambda tup, *margs: fun(*(margs + tup))
-    return vmap(
-        _fun, in_axes=(None,) + (0,) * argnums)(args[argnums:], *args[:argnums])
+    def vfun(*args):
+        _fun = lambda tup, *margs: fun(*(margs + tup))
+        return vmap(_fun, in_axes=(None,) + (0,) * argnums)(
+            args[argnums:], *args[:argnums]
+        )
 
-  return vfun
+    return vfun
 
 
 def linearize(fun, argnums=3):
-  """Vectorized gradient or jacobian operator.
+    """Vectorized gradient or jacobian operator.
 
-  Args:
-    fun: numpy scalar or vector function with signature fun(x, u, t, *args).
-    argnums: number of leading arguments of fun to vectorize.
+    Args:
+      fun: numpy scalar or vector function with signature fun(x, u, t, *args).
+      argnums: number of leading arguments of fun to vectorize.
 
-  Returns:
-    A function that evaluates Gradients or Jacobians with respect to states and
-    controls along a trajectory, e.g.,
+    Returns:
+      A function that evaluates Gradients or Jacobians with respect to states and
+      controls along a trajectory, e.g.,
 
-        dynamics_jacobians = linearize(dynamics)
-        cost_gradients = linearize(cost)
-        A, B = dynamics_jacobians(X, pad(U), timesteps)
-        q, r = cost_gradients(X, pad(U), timesteps)
+          dynamics_jacobians = linearize(dynamics)
+          cost_gradients = linearize(cost)
+          A, B = dynamics_jacobians(X, pad(U), timesteps)
+          q, r = cost_gradients(X, pad(U), timesteps)
 
-        where,
-          X is [T+1, n] state trajectory,
-          U is [T, m] control sequence (pad(U) pads a 0 row for convenience),
-          timesteps is typically np.arange(T+1)
+          where,
+            X is [T+1, n] state trajectory,
+            U is [T, m] control sequence (pad(U) pads a 0 row for convenience),
+            timesteps is typically np.arange(T+1)
 
-          and A, B are Dynamics Jacobians wrt state (x) and control (u) of
-          shape [T+1, n, n] and [T+1, n, m] respectively;
+            and A, B are Dynamics Jacobians wrt state (x) and control (u) of
+            shape [T+1, n, n] and [T+1, n, m] respectively;
 
-          and q, r are Cost Gradients wrt state (x) and control (u) of
-          shape [T+1, n] and [T+1, m] respectively.
+            and q, r are Cost Gradients wrt state (x) and control (u) of
+            shape [T+1, n] and [T+1, m] respectively.
 
-          Note: due to padding of U, last row of A, B, and r may be discarded.
-  """
-  jacobian_x = jacobian(fun)
-  jacobian_u = jacobian(fun, argnums=1)
+            Note: due to padding of U, last row of A, B, and r may be discarded.
+    """
+    jacobian_x = jacobian(fun)
+    jacobian_u = jacobian(fun, argnums=1)
 
-  def linearizer(*args):
-    return jacobian_x(*args), jacobian_u(*args)
+    def linearizer(*args):
+        return jacobian_x(*args), jacobian_u(*args)
 
-  return vectorize(linearizer, argnums)
+    return vectorize(linearizer, argnums)
 
 
 def quadratize(fun, argnums=3):
-  """Vectorized Hessian operator for a scalar function.
+    """Vectorized Hessian operator for a scalar function.
 
-  Args:
-    fun: numpy scalar with signature fun(x, u, t, *args).
-    argnums: number of leading arguments of fun to vectorize.
+    Args:
+      fun: numpy scalar with signature fun(x, u, t, *args).
+      argnums: number of leading arguments of fun to vectorize.
 
-  Returns:
-    A function that evaluates Hessians with respect to state and controls along
-    a trajectory, e.g.,
+    Returns:
+      A function that evaluates Hessians with respect to state and controls along
+      a trajectory, e.g.,
 
-      Q, R, M = quadratize(cost)(X, pad(U), timesteps)
+        Q, R, M = quadratize(cost)(X, pad(U), timesteps)
 
-     where,
-          X is [T+1, n] state trajectory,
-          U is [T, m] control sequence (pad(U) pads a 0 row for convenience),
-          timesteps is typically np.arange(T+1)
+       where,
+            X is [T+1, n] state trajectory,
+            U is [T, m] control sequence (pad(U) pads a 0 row for convenience),
+            timesteps is typically np.arange(T+1)
 
-    and,
-          Q is [T+1, n, n] Hessian wrt state: partial^2 fun/ partial^2 x,
-          R is [T+1, m, m] Hessian wrt control: partial^2 fun/ partial^2 u,
-          M is [T+1, n, m] mixed derivatives: partial^2 fun/partial_x partial_u
-  """
-  hessian_x = hessian(fun)
-  hessian_u = hessian(fun, argnums=1)
-  hessian_x_u = jacobian(jax.grad(fun), argnums=1)
+      and,
+            Q is [T+1, n, n] Hessian wrt state: partial^2 fun/ partial^2 x,
+            R is [T+1, m, m] Hessian wrt control: partial^2 fun/ partial^2 u,
+            M is [T+1, n, m] mixed derivatives: partial^2 fun/partial_x partial_u
+    """
+    hessian_x = hessian(fun)
+    hessian_u = hessian(fun, argnums=1)
+    hessian_x_u = jacobian(jax.grad(fun), argnums=1)
 
-  def quadratizer(*args):
-    return hessian_x(*args), hessian_u(*args), hessian_x_u(*args)
+    def quadratizer(*args):
+        return hessian_x(*args), hessian_u(*args), hessian_x_u(*args)
 
-  return vectorize(quadratizer, argnums)
+    return vectorize(quadratizer, argnums)
 
 
 def rollout(dynamics, U, x0):
-  """Rolls-out x[t+1] = dynamics(x[t], U[t], t), x[0] = x0.
+    """Rolls-out x[t+1] = dynamics(x[t], U[t], t), x[0] = x0.
 
-  Args:
-    dynamics: a function f(x, u, t) to rollout.
-    U: (T, m) np array for control sequence.
-    x0: (n, ) np array for initial state.
+    Args:
+      dynamics: a function f(x, u, t) to rollout.
+      U: (T, m) np array for control sequence.
+      x0: (n, ) np array for initial state.
 
-  Returns:
-     X: (T+1, n) state trajectory.
-  """
-  return _rollout(dynamics, U, x0)
+    Returns:
+       X: (T+1, n) state trajectory.
+    """
+    return _rollout(dynamics, U, x0)
 
 
 def _rollout(dynamics, U, x0, *args):
-  def dynamics_for_scan(x, ut):
-    u, t = ut
-    x_next = dynamics(x, u, t, *args)
-    return x_next, x_next
+    def dynamics_for_scan(x, ut):
+        u, t = ut
+        x_next = dynamics(x, u, t, *args)
+        return x_next, x_next
 
-  return np.vstack(
-      (x0, lax.scan(dynamics_for_scan, x0, (U, np.arange(U.shape[0])))[1]))
+    return np.vstack(
+        (x0, lax.scan(dynamics_for_scan, x0, (U, np.arange(U.shape[0])))[1])
+    )
 
 
 def evaluate(cost, X, U, *args):
-  """Evaluates cost(x, u, t) along a trajectory.
+    """Evaluates cost(x, u, t) along a trajectory.
 
-  Args:
-    cost: cost_fn with signature cost(x, u, t, *args)
-    X: (T, n) state trajectory.
-    U: (T, m) control sequence.
-    *args: args for cost_fn
+    Args:
+      cost: cost_fn with signature cost(x, u, t, *args)
+      X: (T, n) state trajectory.
+      U: (T, m) control sequence.
+      *args: args for cost_fn
 
-  Returns:
-    objectives: (T, ) array of objectives.
-  """
-  timesteps = np.arange(X.shape[0])
-  return vectorize(cost)(X, U, timesteps, *args)
+    Returns:
+      objectives: (T, ) array of objectives.
+    """
+    timesteps = np.arange(X.shape[0])
+    return vectorize(cost)(X, U, timesteps, *args)
 
 
 def objective(cost, dynamics, U, x0):
-  """Evaluates total cost for a control sequence.
+    """Evaluates total cost for a control sequence.
 
-  Args:
-    cost: cost_fn with signature cost(x, u, t)
-    dynamics: dynamics_fn with signature dynamics(x, u, t)
-    U: (T, m) control sequence.
-    x0: (n, ) initial state.
+    Args:
+      cost: cost_fn with signature cost(x, u, t)
+      dynamics: dynamics_fn with signature dynamics(x, u, t)
+      U: (T, m) control sequence.
+      x0: (n, ) initial state.
 
-  Returns:
-    objectives: total objective summed across time.
-  """
-  cost_converted, cost_consts = custom_derivatives.closure_convert(
-      cost, x0, U[0], 0)
-  dynamics_converted, dynamics_consts = custom_derivatives.closure_convert(
-      dynamics, x0, U[0], 0)
-  return _objective(cost_converted, dynamics_converted, U, x0, cost_consts,
-                    dynamics_consts)
+    Returns:
+      objectives: total objective summed across time.
+    """
+    cost_converted, cost_consts = custom_derivatives.closure_convert(cost, x0, U[0], 0)
+    dynamics_converted, dynamics_consts = custom_derivatives.closure_convert(
+        dynamics, x0, U[0], 0
+    )
+    return _objective(
+        cost_converted, dynamics_converted, U, x0, cost_consts, dynamics_consts
+    )
 
 
 # no custom_vjp attached
 def _objective_template(cost, dynamics, U, x0, cost_args, dynamics_args):
-  return np.sum(
-      evaluate(cost, _rollout(dynamics, U, x0, *dynamics_args), pad(U),
-               *cost_args))
+    return np.sum(
+        evaluate(cost, _rollout(dynamics, U, x0, *dynamics_args), pad(U), *cost_args)
+    )
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
 def _objective(cost, dynamics, U, x0, cost_args, dynamics_args):
-  return _objective_template(cost, dynamics, U, x0, cost_args, dynamics_args)
+    return _objective_template(cost, dynamics, U, x0, cost_args, dynamics_args)
 
 
 def _objective_fwd(cost, dynamics, U, x0, cost_args, dynamics_args):
-  obj = _objective(cost, dynamics, U, x0, cost_args, dynamics_args)
-  return (obj, (U, x0, cost_args, dynamics_args))
+    obj = _objective(cost, dynamics, U, x0, cost_args, dynamics_args)
+    return (obj, (U, x0, cost_args, dynamics_args))
 
 
 def _objective_bwd(cost, dynamics, res, g):
-  return (g * grad_wrt_controls(cost, dynamics, *res),) + (None,) * 3
+    return (g * grad_wrt_controls(cost, dynamics, *res),) + (None,) * 3
 
 
 _objective.defvjp(_objective_fwd, _objective_bwd)
 
 
 def adjoint(A, B, q, r):
-  """Solve adjoint equations.
+    """Solve adjoint equations.
 
-  Args:
-      A: dynamics Jacobians with respect to state.
-      B: dynamics Jacobians with respect to control.
-      q: cost gradients with respect to state.
-      r: cost gradients with respect to control.
+    Args:
+        A: dynamics Jacobians with respect to state.
+        B: dynamics Jacobians with respect to control.
+        q: cost gradients with respect to state.
+        r: cost gradients with respect to control.
 
-  Returns:
-      gradient, adjoints, final adjoint variable.
+    Returns:
+        gradient, adjoints, final adjoint variable.
 
-  Usage:
-    q, r = linearize(cost)(X, pad(U), timesteps)
-    A, B = linearize(dynamics)(X, pad(U), np.arange(T + 1))
-    gradient, adjoints, _ = adjoint(A, B, q, r)
-  """
+    Usage:
+      q, r = linearize(cost)(X, pad(U), timesteps)
+      A, B = linearize(dynamics)(X, pad(U), np.arange(T + 1))
+      gradient, adjoints, _ = adjoint(A, B, q, r)
+    """
 
-  n = q.shape[1]
-  T = q.shape[0] - 1
-  m = r.shape[1]
-  P = np.zeros((T, n))
-  g = np.zeros((T, m))
+    n = q.shape[1]
+    T = q.shape[0] - 1
+    m = r.shape[1]
+    P = np.zeros((T, n))
+    g = np.zeros((T, m))
 
-  def body(p, t):  # backward recursion of Adjoint equations.
-    g = r[t] + np.matmul(B[t].T, p)
-    p = np.matmul(A[t].T, p) + q[t]
-    return p, (p, g)
+    def body(p, t):  # backward recursion of Adjoint equations.
+        g = r[t] + np.matmul(B[t].T, p)
+        p = np.matmul(A[t].T, p) + q[t]
+        return p, (p, g)
 
-  p, (P, g) = lax.scan(body, q[T], np.arange(T - 1, -1, -1))
-  return np.flipud(g), np.vstack((np.flipud(P[:T - 1]), q[T])), p
+    p, (P, g) = lax.scan(body, q[T], np.arange(T - 1, -1, -1))
+    return np.flipud(g), np.vstack((np.flipud(P[: T - 1]), q[T])), p
 
 
 def grad_wrt_controls(cost, dynamics, U, x0, cost_args, dynamics_args):
-  """Evaluates gradient at a control sequence.
+    """Evaluates gradient at a control sequence.
 
-  Args:
-    cost: cost_fn
-    dynamics: dynamics_fn
-    U: (T, m) control sequence.
-    x0: (n, ) initial state.
-    cost_args: args passed to cost
-    dynamics_args: args passed to dynamics.
+    Args:
+      cost: cost_fn
+      dynamics: dynamics_fn
+      U: (T, m) control sequence.
+      x0: (n, ) initial state.
+      cost_args: args passed to cost
+      dynamics_args: args passed to dynamics.
 
-  Returns:
-    gradient (T, m) of total cost with respect to controls.
-  """
-  jacobians = linearize(dynamics)
-  grad_cost = linearize(cost)
+    Returns:
+      gradient (T, m) of total cost with respect to controls.
+    """
+    jacobians = linearize(dynamics)
+    grad_cost = linearize(cost)
 
-  X = _rollout(dynamics, U, x0, *dynamics_args)
-  timesteps = np.arange(X.shape[0])
-  A, B = jacobians(X, pad(U), timesteps, *dynamics_args)
-  q, r = grad_cost(X, pad(U), timesteps, *cost_args)
-  gradient, _, _ = adjoint(A, B, q, r)
-  return gradient
+    X = _rollout(dynamics, U, x0, *dynamics_args)
+    timesteps = np.arange(X.shape[0])
+    A, B = jacobians(X, pad(U), timesteps, *dynamics_args)
+    q, r = grad_cost(X, pad(U), timesteps, *cost_args)
+    gradient, _, _ = adjoint(A, B, q, r)
+    return gradient
 
 
 def hvp(cost, dynamics, U, x0, V, cost_args, dynamics_args):
-  """Evaluates hvp at a control sequence.
+    """Evaluates hvp at a control sequence.
 
-  Args:
-    cost: cost_fn
-    dynamics: dynamics_fn
-    U: (T, m) control sequence.
-    x0: (n, ) initial state.
-    V: (T, m) vector in Hessian-vector product.
-    cost_args: args passed to cost
-    dynamics_args: args passed to dynamics.
+    Args:
+      cost: cost_fn
+      dynamics: dynamics_fn
+      U: (T, m) control sequence.
+      x0: (n, ) initial state.
+      V: (T, m) vector in Hessian-vector product.
+      cost_args: args passed to cost
+      dynamics_args: args passed to dynamics.
 
-  Returns:
-    gradient (T, m) of total cost with respect to controls.
-  """
-  grad_fn = partial(grad_wrt_controls, cost, dynamics)
-  return jax.jvp(lambda U1: grad_fn(U1, x0, cost_args, dynamics_args), (U,),
-                 (V,))
+    Returns:
+      gradient (T, m) of total cost with respect to controls.
+    """
+    grad_fn = partial(grad_wrt_controls, cost, dynamics)
+    return jax.jvp(lambda U1: grad_fn(U1, x0, cost_args, dynamics_args), (U,), (V,))
 
 
 @partial(jit, static_argnums=(0,))
 def ddp_rollout(dynamics, X, U, K, k, alpha, *args):
-  """Rollouts used in Differential Dynamic Programming.
+    """Rollouts used in Differential Dynamic Programming.
 
-  Args:
-    dynamics: function with signature dynamics(x, u, t, *args).
-    X: [T+1, n] current state trajectory.
-    U: [T, m] current control sequence.
-    K: [T, m, n] state feedback gains.
-    k: [T, m] affine terms in state feedback.
-    alpha: line search parameter.
-    *args: passed to dynamics.
+    Args:
+      dynamics: function with signature dynamics(x, u, t, *args).
+      X: [T+1, n] current state trajectory.
+      U: [T, m] current control sequence.
+      K: [T, m, n] state feedback gains.
+      k: [T, m] affine terms in state feedback.
+      alpha: line search parameter.
+      *args: passed to dynamics.
 
-  Returns:
-    Xnew, Unew: updated state trajectory and control sequence, via:
+    Returns:
+      Xnew, Unew: updated state trajectory and control sequence, via:
 
-      del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
-      u = U[t] + del_u
-      x = dynamics(Xnew[t], u, t)
-  """
-  n = X.shape[1]
-  T, m = U.shape
-  Xnew = np.zeros((T + 1, n))
-  Unew = np.zeros((T, m))
-  Xnew = Xnew.at[0].set(X[0])
+        del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
+        u = U[t] + del_u
+        x = dynamics(Xnew[t], u, t)
+    """
+    n = X.shape[1]
+    T, m = U.shape
+    Xnew = np.zeros((T + 1, n))
+    Unew = np.zeros((T, m))
+    Xnew = Xnew.at[0].set(X[0])
 
-  def body(t, inputs):
-    Xnew, Unew = inputs
-    del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
-    u = U[t] + del_u
-    x = dynamics(Xnew[t], u, t, *args)
-    Unew = Unew.at[t].set(u)
-    Xnew = Xnew.at[t + 1].set(x)
-    return Xnew, Unew
+    def body(t, inputs):
+        Xnew, Unew = inputs
+        del_u = alpha * k[t] + np.matmul(K[t], Xnew[t] - X[t])
+        u = U[t] + del_u
+        x = dynamics(Xnew[t], u, t, *args)
+        Unew = Unew.at[t].set(u)
+        Xnew = Xnew.at[t + 1].set(x)
+        return Xnew, Unew
 
-  return lax.fori_loop(0, T, body, (Xnew, Unew))
+    return lax.fori_loop(0, T, body, (Xnew, Unew))
 
 
 @partial(jit, static_argnums=(0, 1))
-def line_search_ddp(cost,
-                    dynamics,
-                    X,
-                    U,
-                    K,
-                    k,
-                    obj,
-                    cost_args=(),
-                    dynamics_args=(),
-                    alpha_0=1.0,
-                    alpha_min=0.00005):
-  """Performs line search with respect to DDP rollouts."""
+def line_search_ddp(
+    cost,
+    dynamics,
+    X,
+    U,
+    K,
+    k,
+    obj,
+    cost_args=(),
+    dynamics_args=(),
+    alpha_0=1.0,
+    alpha_min=0.00005,
+):
+    """Performs line search with respect to DDP rollouts."""
 
-  obj = np.where(np.isnan(obj), np.inf, obj)
-  costs = partial(evaluate, cost)
-  total_cost = lambda X, U, *margs: np.sum(costs(X, pad(U), *margs))
+    obj = np.where(np.isnan(obj), np.inf, obj)
+    costs = partial(evaluate, cost)
+    total_cost = lambda X, U, *margs: np.sum(costs(X, pad(U), *margs))
 
-  def line_search(inputs):
-    """Line search to find improved control sequence."""
-    _, _, _, alpha = inputs
-    Xnew, Unew = ddp_rollout(dynamics, X, U, K, k, alpha, *dynamics_args)
-    obj_new = total_cost(Xnew, Unew, *cost_args)
-    alpha = 0.5 * alpha
-    obj_new = np.where(np.isnan(obj_new), obj, obj_new)
+    def line_search(inputs):
+        """Line search to find improved control sequence."""
+        _, _, _, alpha = inputs
+        Xnew, Unew = ddp_rollout(dynamics, X, U, K, k, alpha, *dynamics_args)
+        obj_new = total_cost(Xnew, Unew, *cost_args)
+        alpha = 0.5 * alpha
+        obj_new = np.where(np.isnan(obj_new), obj, obj_new)
 
-    # Only return new trajs if leads to a strict cost decrease
-    X_return = np.where(obj_new < obj, Xnew, X)
-    U_return = np.where(obj_new < obj, Unew, U)
+        # Only return new trajs if leads to a strict cost decrease
+        X_return = np.where(obj_new < obj, Xnew, X)
+        U_return = np.where(obj_new < obj, Unew, U)
 
-    return X_return, U_return, np.minimum(obj_new, obj), alpha
+        return X_return, U_return, np.minimum(obj_new, obj), alpha
 
-  return lax.while_loop(
-      lambda inputs: np.logical_and(inputs[2] >= obj, inputs[3] > alpha_min),
-      line_search, (X, U, obj, alpha_0))
+    return lax.while_loop(
+        lambda inputs: np.logical_and(inputs[2] >= obj, inputs[3] > alpha_min),
+        line_search,
+        (X, U, obj, alpha_0),
+    )
 
 
 @jit
 def project_psd_cone(Q, delta=0.0):
-  """Projects to the cone of positive semi-definite matrices.
+    """Projects to the cone of positive semi-definite matrices.
 
-  Args:
-    Q: [n, n] symmetric matrix.
-    delta: minimum eigenvalue of the projection.
+    Args:
+      Q: [n, n] symmetric matrix.
+      delta: minimum eigenvalue of the projection.
 
-  Returns:
-    [n, n] symmetric matrix projection of the input.
-  """
-  S, V = np.linalg.eigh(Q)
-  S = np.maximum(S, delta)
-  Q_plus = np.matmul(V, np.matmul(np.diag(S), V.T))
-  return 0.5 * (Q_plus + Q_plus.T)
+    Returns:
+      [n, n] symmetric matrix projection of the input.
+    """
+    S, V = np.linalg.eigh(Q)
+    S = np.maximum(S, delta)
+    Q_plus = np.matmul(V, np.matmul(np.diag(S), V.T))
+    return 0.5 * (Q_plus + Q_plus.T)
 
 
-def ilqr(cost,
-         dynamics,
-         x0,
-         U,
-         maxiter=100,
-         grad_norm_threshold=1e-4,
-         relative_grad_norm_threshold=0.0,
-         obj_step_threshold=0.0,
-         inputs_step_threshold=0.0,
-         make_psd=False,
-         psd_delta=0.0,
-         alpha_0=1.0,
-         alpha_min=0.00005,
-         vjp_method='tvlqr',
-         vjp_options=None):
-  """Iterative Linear Quadratic Regulator.
+def ilqr(
+    cost,
+    dynamics,
+    x0,
+    U,
+    maxiter=100,
+    grad_norm_threshold=1e-4,
+    relative_grad_norm_threshold=0.0,
+    obj_step_threshold=0.0,
+    inputs_step_threshold=0.0,
+    make_psd=False,
+    psd_delta=0.0,
+    alpha_0=1.0,
+    alpha_min=0.00005,
+    vjp_method="tvlqr",
+    vjp_options=None,
+):
+    """Iterative Linear Quadratic Regulator.
 
-  This method supports differentiation of the (X, U) outputs with respect
-  to any parameters closed over in the cost function.
+    This method supports differentiation of the (X, U) outputs with respect
+    to any parameters closed over in the cost function.
 
-  Note that if you attempt to differentiate with respect to either
-  inputs that are not closed over in the cost, or outputs other than (X, U),
-  there will be no warning.
+    Note that if you attempt to differentiate with respect to either
+    inputs that are not closed over in the cost, or outputs other than (X, U),
+    there will be no warning.
 
-  Future implementations will support the differentiation of (X, U, obj)
-  with respect to x0 and the parameters closed over in either the cost
-  or dynamics functions.
+    Future implementations will support the differentiation of (X, U, obj)
+    with respect to x0 and the parameters closed over in either the cost
+    or dynamics functions.
 
-  Optimization terminates if any one these conditions is true:
-   1) Reached maximum iteration `maxiter`.
-   2) The line-search step, relative to a full step, was less than `alpha_min`.
-   3) The norm of the gradient is less than `grad_norm_threshold` or
-      `relative_grad_norm_threshold` times one plus the gradient norm at the
-      initial guess (1 + norm(grad(U_0))), whichever is the larger threshold.
-   4) The norm of the step taken in the input (controls) space is less than one
-      plus the norm of the current control inputs (1 + norm(U)) times
-      `inputs_step_threshold`.
-   5) The improvement in objective value is less than one plus the objective
-      value (1 + abs(obj)) times `obj_step_threshold`.
+    Optimization terminates if any one these conditions is true:
+     1) Reached maximum iteration `maxiter`.
+     2) The line-search step, relative to a full step, was less than `alpha_min`.
+     3) The norm of the gradient is less than `grad_norm_threshold` or
+        `relative_grad_norm_threshold` times one plus the gradient norm at the
+        initial guess (1 + norm(grad(U_0))), whichever is the larger threshold.
+     4) The norm of the step taken in the input (controls) space is less than one
+        plus the norm of the current control inputs (1 + norm(U)) times
+        `inputs_step_threshold`.
+     5) The improvement in objective value is less than one plus the objective
+        value (1 + abs(obj)) times `obj_step_threshold`.
 
-  Args:
-    cost:      cost(x, u, t) returns scalar.
-    dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
-    x0: initial_state - 1D np array of shape (n, ).
-    U: initial_controls - 2D np array of shape (T, m).
-    maxiter: maximum iterations.
-    grad_norm_threshold: tolerance for stopping optimization.
-    relative_grad_norm_threshold: tolerance on gradient norm for stopping
-      optimization, relative to the gradient norm at the initial guess.
-    obj_step_threshold: tolerance on objective value steps for stopping
-      optimization, relative to the objective value itself.
-    inputs_step_threshold: tolerance on input steps for stopping
-      optimization, relative to the initial input (aka controls). iterations
-      stop with the last iteration did not move the controls by more than this
-      given fraction of the `initial_controls`.
-    make_psd: whether to zero negative eigenvalues after quadratization.
-    psd_delta: The delta value to make the problem PSD. Specifically, it will
-      ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
-      with respect to state and control are always positive definite.
-    alpha_0: initial line search value.
-    alpha_min: minimum line search value.
-    vjp_method: One of ('explicit', 'cg', 'tvlqr'). Defaults to 'tvlqr'. The
-      methods describe how the inv(hess) * v problem is solved in applying the
-      implicit function theorem. The method 'explicit' refers to fully
-      materializing the Hessian in memory and relying on jax.numpy.linalg.solve.
-      The method 'cg' never materizlies the Hessian, and instead uses
-      jax.scipy.sparse.linalg.cg and Hessian vector products. The method 'tvlqr'
-      utilizes the structure of ilqr to solve inv(hess) * v with another
-      call to tvlqr.
-    vjp_options: A dictionary containing optional parameters to pass to the
-      vjp implementation. The valid keys depend on the vjp_method. For
-      method 'explicit', vjp_options accepts a key 'regularization' with a float
-      value, which is added to the Hessian to improve numerical conditioning.
-      For method 'cg', in addition to 'regularization', vjp_options also
-      accepts keys ('tol', 'atol', 'maxiter'), which corresponds to the
-      options of jax.scipy.sparse.linalg.cg. Method 'tvlqr' does not have any
-      vjp_options.
+    Args:
+      cost:      cost(x, u, t) returns scalar.
+      dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
+      x0: initial_state - 1D np array of shape (n, ).
+      U: initial_controls - 2D np array of shape (T, m).
+      maxiter: maximum iterations.
+      grad_norm_threshold: tolerance for stopping optimization.
+      relative_grad_norm_threshold: tolerance on gradient norm for stopping
+        optimization, relative to the gradient norm at the initial guess.
+      obj_step_threshold: tolerance on objective value steps for stopping
+        optimization, relative to the objective value itself.
+      inputs_step_threshold: tolerance on input steps for stopping
+        optimization, relative to the initial input (aka controls). iterations
+        stop with the last iteration did not move the controls by more than this
+        given fraction of the `initial_controls`.
+      make_psd: whether to zero negative eigenvalues after quadratization.
+      psd_delta: The delta value to make the problem PSD. Specifically, it will
+        ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
+        with respect to state and control are always positive definite.
+      alpha_0: initial line search value.
+      alpha_min: minimum line search value.
+      vjp_method: One of ('explicit', 'cg', 'tvlqr'). Defaults to 'tvlqr'. The
+        methods describe how the inv(hess) * v problem is solved in applying the
+        implicit function theorem. The method 'explicit' refers to fully
+        materializing the Hessian in memory and relying on jax.numpy.linalg.solve.
+        The method 'cg' never materizlies the Hessian, and instead uses
+        jax.scipy.sparse.linalg.cg and Hessian vector products. The method 'tvlqr'
+        utilizes the structure of ilqr to solve inv(hess) * v with another
+        call to tvlqr.
+      vjp_options: A dictionary containing optional parameters to pass to the
+        vjp implementation. The valid keys depend on the vjp_method. For
+        method 'explicit', vjp_options accepts a key 'regularization' with a float
+        value, which is added to the Hessian to improve numerical conditioning.
+        For method 'cg', in addition to 'regularization', vjp_options also
+        accepts keys ('tol', 'atol', 'maxiter'), which corresponds to the
+        options of jax.scipy.sparse.linalg.cg. Method 'tvlqr' does not have any
+        vjp_options.
 
-  Returns:
-    X: optimal state trajectory - nd array of shape (T+1, n).
-      Is a differentiable output.
-    U: optimal control trajectory - nd array of shape (T, m).
-      Is a differentiable output.
-    obj: final objective achieved.
-    gradient: gradient at the solution returned.
-    adjoints: associated adjoint variables.
-    lqr: inputs to the final LQR solve.
-    iteration: number of iterations upon convergence.
-  """
-  valid_vjp_methods = ('explicit', 'cg', 'tvlqr', 'tvlqr_experimental')
-  if vjp_options is None:
-    vjp_options = {}
+    Returns:
+      X: optimal state trajectory - nd array of shape (T+1, n).
+        Is a differentiable output.
+      U: optimal control trajectory - nd array of shape (T, m).
+        Is a differentiable output.
+      obj: final objective achieved.
+      gradient: gradient at the solution returned.
+      adjoints: associated adjoint variables.
+      lqr: inputs to the final LQR solve.
+      iteration: number of iterations upon convergence.
+    """
+    valid_vjp_methods = ("explicit", "cg", "tvlqr", "tvlqr_experimental")
+    if vjp_options is None:
+        vjp_options = {}
 
-  cost_fn, cost_args = custom_derivatives.closure_convert(cost, x0, U[0], 0)
-  dynamics_fn, dynamics_args = custom_derivatives.closure_convert(
-      dynamics, x0, U[0], 0)
-  def new_cost_fn(x, u, t, bundled_cost_args):
-    return cost_fn(x, u, t, *bundled_cost_args)
-  def new_dynamics_fn(x, u, t, bundled_dynamics_args):
-    return dynamics_fn(x, u, t, *bundled_dynamics_args)
-  # _ilqr_tvlqr_vjp can only differentiate cost_args wrt the first argument of
-  # the cost_fn. so, we bundle all the cost_args as one pytree. this is not
-  # technically needed for dynamics_fn right now, since _ilqr_tvlqr_vjp cannot
-  # diff wrt dynamics_args, but we do it anyways for consistency. future
-  # implementations of _ilqr_tvlqr_vjp that want to diff wrt dynamics_args only
-  # need to handle the first arg without loss of generality. in fact, we could
-  # even ravel_pytree tuple(cost_args) here, and then all custom_vjp methods
-  # would only need to reason about a vector argument wlog.
+    cost_fn, cost_args = custom_derivatives.closure_convert(cost, x0, U[0], 0)
+    dynamics_fn, dynamics_args = custom_derivatives.closure_convert(
+        dynamics, x0, U[0], 0
+    )
 
-  if vjp_method == 'explicit':
-    return _ilqr_explicit_vjp(new_cost_fn, new_dynamics_fn, x0, U,
-                              (tuple(cost_args),), (tuple(dynamics_args),),
-                              maxiter, grad_norm_threshold,
-                              relative_grad_norm_threshold, obj_step_threshold,
-                              inputs_step_threshold, make_psd, psd_delta,
-                              alpha_0, alpha_min, vjp_options)
-  elif vjp_method == 'cg':
-    return _ilqr_cg_vjp(new_cost_fn, new_dynamics_fn, x0, U,
-                        (tuple(cost_args),), (tuple(dynamics_args),), maxiter,
-                        grad_norm_threshold, relative_grad_norm_threshold,
-                        obj_step_threshold, inputs_step_threshold, make_psd,
-                        psd_delta, alpha_0, alpha_min, vjp_options)
-  elif vjp_method == 'tvlqr':
-    return _ilqr_tvlqr_vjp(new_cost_fn, new_dynamics_fn, x0, U,
-                           (tuple(cost_args),), (tuple(dynamics_args),),
-                           maxiter, grad_norm_threshold,
-                           relative_grad_norm_threshold, obj_step_threshold,
-                           inputs_step_threshold, make_psd, psd_delta, alpha_0,
-                           alpha_min, vjp_options)
-  elif vjp_method == 'tvlqr_experimental':
-    return _ilqr_tvlqr_experimental_vjp(
-        new_cost_fn, new_dynamics_fn, x0, U, (tuple(cost_args),),
-        (tuple(dynamics_args),), maxiter, grad_norm_threshold,
-        relative_grad_norm_threshold, obj_step_threshold, inputs_step_threshold,
-        make_psd, psd_delta, alpha_0, alpha_min, vjp_options)
-  else:
-    raise ValueError(f'vjp_method must be one of {valid_vjp_methods}, '
-                     f'got {vjp_method} instead.')
+    def new_cost_fn(x, u, t, bundled_cost_args):
+        return cost_fn(x, u, t, *bundled_cost_args)
+
+    def new_dynamics_fn(x, u, t, bundled_dynamics_args):
+        return dynamics_fn(x, u, t, *bundled_dynamics_args)
+
+    # _ilqr_tvlqr_vjp can only differentiate cost_args wrt the first argument of
+    # the cost_fn. so, we bundle all the cost_args as one pytree. this is not
+    # technically needed for dynamics_fn right now, since _ilqr_tvlqr_vjp cannot
+    # diff wrt dynamics_args, but we do it anyways for consistency. future
+    # implementations of _ilqr_tvlqr_vjp that want to diff wrt dynamics_args only
+    # need to handle the first arg without loss of generality. in fact, we could
+    # even ravel_pytree tuple(cost_args) here, and then all custom_vjp methods
+    # would only need to reason about a vector argument wlog.
+
+    if vjp_method == "explicit":
+        return _ilqr_explicit_vjp(
+            new_cost_fn,
+            new_dynamics_fn,
+            x0,
+            U,
+            (tuple(cost_args),),
+            (tuple(dynamics_args),),
+            maxiter,
+            grad_norm_threshold,
+            relative_grad_norm_threshold,
+            obj_step_threshold,
+            inputs_step_threshold,
+            make_psd,
+            psd_delta,
+            alpha_0,
+            alpha_min,
+            vjp_options,
+        )
+    elif vjp_method == "cg":
+        return _ilqr_cg_vjp(
+            new_cost_fn,
+            new_dynamics_fn,
+            x0,
+            U,
+            (tuple(cost_args),),
+            (tuple(dynamics_args),),
+            maxiter,
+            grad_norm_threshold,
+            relative_grad_norm_threshold,
+            obj_step_threshold,
+            inputs_step_threshold,
+            make_psd,
+            psd_delta,
+            alpha_0,
+            alpha_min,
+            vjp_options,
+        )
+    elif vjp_method == "tvlqr":
+        return _ilqr_tvlqr_vjp(
+            new_cost_fn,
+            new_dynamics_fn,
+            x0,
+            U,
+            (tuple(cost_args),),
+            (tuple(dynamics_args),),
+            maxiter,
+            grad_norm_threshold,
+            relative_grad_norm_threshold,
+            obj_step_threshold,
+            inputs_step_threshold,
+            make_psd,
+            psd_delta,
+            alpha_0,
+            alpha_min,
+            vjp_options,
+        )
+    elif vjp_method == "tvlqr_experimental":
+        return _ilqr_tvlqr_experimental_vjp(
+            new_cost_fn,
+            new_dynamics_fn,
+            x0,
+            U,
+            (tuple(cost_args),),
+            (tuple(dynamics_args),),
+            maxiter,
+            grad_norm_threshold,
+            relative_grad_norm_threshold,
+            obj_step_threshold,
+            inputs_step_threshold,
+            make_psd,
+            psd_delta,
+            alpha_0,
+            alpha_min,
+            vjp_options,
+        )
+    else:
+        raise ValueError(
+            f"vjp_method must be one of {valid_vjp_methods}, "
+            f"got {vjp_method} instead."
+        )
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
 @partial(jit, static_argnums=(0, 1))
-def _ilqr_explicit_vjp(cost, dynamics, x0, U, cost_args, dynamics_args, maxiter,
-                       grad_norm_threshold, relative_grad_norm_threshold,
-                       obj_step_threshold, inputs_step_threshold, make_psd,
-                       psd_delta, alpha_0, alpha_min, vjp_options):
-  return _ilqr_template(cost, dynamics, x0, U, cost_args, dynamics_args,
-                        maxiter, grad_norm_threshold,
-                        relative_grad_norm_threshold, obj_step_threshold,
-                        inputs_step_threshold, make_psd, psd_delta, alpha_0,
-                        alpha_min, vjp_options)
+def _ilqr_explicit_vjp(
+    cost,
+    dynamics,
+    x0,
+    U,
+    cost_args,
+    dynamics_args,
+    maxiter,
+    grad_norm_threshold,
+    relative_grad_norm_threshold,
+    obj_step_threshold,
+    inputs_step_threshold,
+    make_psd,
+    psd_delta,
+    alpha_0,
+    alpha_min,
+    vjp_options,
+):
+    return _ilqr_template(
+        cost,
+        dynamics,
+        x0,
+        U,
+        cost_args,
+        dynamics_args,
+        maxiter,
+        grad_norm_threshold,
+        relative_grad_norm_threshold,
+        obj_step_threshold,
+        inputs_step_threshold,
+        make_psd,
+        psd_delta,
+        alpha_0,
+        alpha_min,
+        vjp_options,
+    )
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
 @partial(jit, static_argnums=(0, 1))
-def _ilqr_cg_vjp(cost, dynamics, x0, U, cost_args, dynamics_args, maxiter,
-                 grad_norm_threshold, relative_grad_norm_threshold,
-                 obj_step_threshold, inputs_step_threshold, make_psd, psd_delta,
-                 alpha_0, alpha_min, vjp_options):
-  return _ilqr_template(cost, dynamics, x0, U, cost_args, dynamics_args,
-                        maxiter, grad_norm_threshold,
-                        relative_grad_norm_threshold, obj_step_threshold,
-                        inputs_step_threshold, make_psd, psd_delta, alpha_0,
-                        alpha_min, vjp_options)
+def _ilqr_cg_vjp(
+    cost,
+    dynamics,
+    x0,
+    U,
+    cost_args,
+    dynamics_args,
+    maxiter,
+    grad_norm_threshold,
+    relative_grad_norm_threshold,
+    obj_step_threshold,
+    inputs_step_threshold,
+    make_psd,
+    psd_delta,
+    alpha_0,
+    alpha_min,
+    vjp_options,
+):
+    return _ilqr_template(
+        cost,
+        dynamics,
+        x0,
+        U,
+        cost_args,
+        dynamics_args,
+        maxiter,
+        grad_norm_threshold,
+        relative_grad_norm_threshold,
+        obj_step_threshold,
+        inputs_step_threshold,
+        make_psd,
+        psd_delta,
+        alpha_0,
+        alpha_min,
+        vjp_options,
+    )
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
 @partial(jit, static_argnums=(0, 1))
-def _ilqr_tvlqr_experimental_vjp(cost, dynamics, x0, U, cost_args,
-                                 dynamics_args, maxiter, grad_norm_threshold,
-                                 relative_grad_norm_threshold,
-                                 obj_step_threshold, inputs_step_threshold,
-                                 make_psd, psd_delta, alpha_0, alpha_min,
-                                 vjp_options):
-  return _ilqr_template(cost, dynamics, x0, U, cost_args, dynamics_args,
-                        maxiter, grad_norm_threshold,
-                        relative_grad_norm_threshold, obj_step_threshold,
-                        inputs_step_threshold, make_psd, psd_delta, alpha_0,
-                        alpha_min, vjp_options)
+def _ilqr_tvlqr_experimental_vjp(
+    cost,
+    dynamics,
+    x0,
+    U,
+    cost_args,
+    dynamics_args,
+    maxiter,
+    grad_norm_threshold,
+    relative_grad_norm_threshold,
+    obj_step_threshold,
+    inputs_step_threshold,
+    make_psd,
+    psd_delta,
+    alpha_0,
+    alpha_min,
+    vjp_options,
+):
+    return _ilqr_template(
+        cost,
+        dynamics,
+        x0,
+        U,
+        cost_args,
+        dynamics_args,
+        maxiter,
+        grad_norm_threshold,
+        relative_grad_norm_threshold,
+        obj_step_threshold,
+        inputs_step_threshold,
+        make_psd,
+        psd_delta,
+        alpha_0,
+        alpha_min,
+        vjp_options,
+    )
 
 
-def _solve_hess_inv_v_explicit(cost, dynamics, v, X, U, A, B, adjoints,
-                               cost_args, dynamics_args, options_dict):
-  """Solve inv(hess) v by explicitly materializing the Hessian."""
-  del A, B, adjoints
-  U_shape = U.shape
-  def flat_obj_fn(flat_U):
-    U = flat_U.reshape(U_shape)
-    return _objective_template(cost, dynamics, U, X[0],
-                               cost_args, dynamics_args)
-  H = jax.hessian(flat_obj_fn)(U.flatten())
-  H += options_dict.get('regularization', 0.0) * np.eye(H.shape[0])
-  return sp.linalg.solve(H, v.flatten()).reshape(U_shape)
+def _solve_hess_inv_v_explicit(
+    cost, dynamics, v, X, U, A, B, adjoints, cost_args, dynamics_args, options_dict
+):
+    """Solve inv(hess) v by explicitly materializing the Hessian."""
+    del A, B, adjoints
+    U_shape = U.shape
+
+    def flat_obj_fn(flat_U):
+        U = flat_U.reshape(U_shape)
+        return _objective_template(cost, dynamics, U, X[0], cost_args, dynamics_args)
+
+    H = jax.hessian(flat_obj_fn)(U.flatten())
+    H += options_dict.get("regularization", 0.0) * np.eye(H.shape[0])
+    return sp.linalg.solve(H, v.flatten()).reshape(U_shape)
 
 
-def _solve_hess_inv_v_cg(cost, dynamics, v, X, U, A, B, adjoints,
-                         cost_args, dynamics_args, options_dict):
-  """Solve inv(hess) v by Hessian vector products and CG."""
-  del A, B, adjoints
-  def obj_fn(U):
-    return _objective_template(cost, dynamics, U, X[0],
-                               cost_args, dynamics_args)
-  def _hvp(v):
-    return _pytree_add(
-        jax.jvp(jax.grad(obj_fn), (U,), (v,))[1],
-        _pytree_scale(v, options_dict.get('regularization', 0.0)))
-  return sp.sparse.linalg.cg(_hvp, v,
-                             tol=options_dict.get('tol', 1e-05),
-                             atol=options_dict.get('atol', 0.0),
-                             maxiter=options_dict.get('maxiter', None))[0]
+def _solve_hess_inv_v_cg(
+    cost, dynamics, v, X, U, A, B, adjoints, cost_args, dynamics_args, options_dict
+):
+    """Solve inv(hess) v by Hessian vector products and CG."""
+    del A, B, adjoints
+
+    def obj_fn(U):
+        return _objective_template(cost, dynamics, U, X[0], cost_args, dynamics_args)
+
+    def _hvp(v):
+        return _pytree_add(
+            jax.jvp(jax.grad(obj_fn), (U,), (v,))[1],
+            _pytree_scale(v, options_dict.get("regularization", 0.0)),
+        )
+
+    return sp.sparse.linalg.cg(
+        _hvp,
+        v,
+        tol=options_dict.get("tol", 1e-05),
+        atol=options_dict.get("atol", 0.0),
+        maxiter=options_dict.get("maxiter", None),
+    )[0]
 
 
-def _solve_hess_inv_v_tvlqr(cost, dynamics, v, X, U, A, B, adjoints,
-                            cost_args, dynamics_args, options_dict):
-  """Solve inv(hess) v by tvlqr."""
-  del options_dict
-  quadratizer = quadratize(hamiltonian(cost, dynamics), argnums=4)
-  Q, R, M = quadratizer(X, pad(U), np.arange(X.shape[0]), pad(adjoints),
-                        cost_args, dynamics_args)
-  c = np.zeros(A.shape[:2])
-  K, k, _, _ = tvlqr(Q, np.zeros_like(X), R, v, M, A, B, c)
-  _, dU = tvlqr_rollout(K, k, np.zeros_like(X[0]), A, B, c)
-  return -dU
+def _solve_hess_inv_v_tvlqr(
+    cost, dynamics, v, X, U, A, B, adjoints, cost_args, dynamics_args, options_dict
+):
+    """Solve inv(hess) v by tvlqr."""
+    del options_dict
+    quadratizer = quadratize(hamiltonian(cost, dynamics), argnums=4)
+    Q, R, M = quadratizer(
+        X, pad(U), np.arange(X.shape[0]), pad(adjoints), cost_args, dynamics_args
+    )
+    c = np.zeros(A.shape[:2])
+    K, k, _, _ = tvlqr(Q, np.zeros_like(X), R, v, M, A, B, c)
+    _, dU = tvlqr_rollout(K, k, np.zeros_like(X[0]), A, B, c)
+    return -dU
 
 
 def _ilqr_explicit_fwd(cost, dynamics, *args):
-  ilqr_output = _ilqr_template(cost, dynamics, *args)
-  X, U, _, _, adjoints, lqr, _ = ilqr_output
-  return ilqr_output, (args, X, U, adjoints, lqr)
+    ilqr_output = _ilqr_template(cost, dynamics, *args)
+    X, U, _, _, adjoints, lqr, _ = ilqr_output
+    return ilqr_output, (args, X, U, adjoints, lqr)
 
 
-def _ilqr_explicit_bwd(solve_hess_inv_v_fn, cost, dynamics, fwd_residuals,
-                       gX_gU_gNonDifferentiableOutputs):
-  """Backward pass of custom vector-Jacobian product implementation."""
-  args, X_star, U_star, adjoints, lqr = fwd_residuals
-  x0, _, cost_args, dynamics_args = args[:4]
-  vjp_options = args[-1]
-  gX, gU = gX_gU_gNonDifferentiableOutputs[:2]
-  # TODO(stephentu): can we throw an error if
-  # gX_gU_gNonDifferentiableOutputs[2:] is non-zero?
+def _ilqr_explicit_bwd(
+    solve_hess_inv_v_fn, cost, dynamics, fwd_residuals, gX_gU_gNonDifferentiableOutputs
+):
+    """Backward pass of custom vector-Jacobian product implementation."""
+    args, X_star, U_star, adjoints, lqr = fwd_residuals
+    x0, _, cost_args, dynamics_args = args[:4]
+    vjp_options = args[-1]
+    gX, gU = gX_gU_gNonDifferentiableOutputs[:2]
+    # TODO(stephentu): can we throw an error if
+    # gX_gU_gNonDifferentiableOutputs[2:] is non-zero?
 
-  _, _, _, _, _, A, B = lqr
+    _, _, _, _, _, A, B = lqr
 
-  flat_params, unflatten_params = jax.flatten_util.ravel_pytree(
-      (x0, cost_args, dynamics_args))
+    flat_params, unflatten_params = jax.flatten_util.ravel_pytree(
+        (x0, cost_args, dynamics_args)
+    )
 
-  def flatten_rollout(U, flat_params):
-    x0, _, dynamics_args = unflatten_params(flat_params)
-    return _rollout(dynamics, U, x0, *dynamics_args)
+    def flatten_rollout(U, flat_params):
+        x0, _, dynamics_args = unflatten_params(flat_params)
+        return _rollout(dynamics, U, x0, *dynamics_args)
 
-  _, rollout_vjp_U_fn = jax.vjp(flatten_rollout, U_star, flat_params)
-  gU_gX, grad_thru_X = rollout_vjp_U_fn(gX)
+    _, rollout_vjp_U_fn = jax.vjp(flatten_rollout, U_star, flat_params)
+    gU_gX, grad_thru_X = rollout_vjp_U_fn(gX)
 
-  lhs = solve_hess_inv_v_fn(cost, dynamics, gU + gU_gX, X_star, U_star,
-                            A, B, adjoints, cost_args, dynamics_args,
-                            vjp_options)
+    lhs = solve_hess_inv_v_fn(
+        cost,
+        dynamics,
+        gU + gU_gX,
+        X_star,
+        U_star,
+        A,
+        B,
+        adjoints,
+        cost_args,
+        dynamics_args,
+        vjp_options,
+    )
 
-  def obj_fn(U, flat_params):
-    x0, cost_args, dynamics_args = unflatten_params(flat_params)
-    return _objective_template(cost, dynamics, U, x0, cost_args, dynamics_args)
-  _, rhs_vjp_fn = jax.vjp(
-      lambda flat_params: jax.grad(obj_fn, argnums=0)(U_star, flat_params),
-      flat_params)
-  grad_thru_U, = _pytree_negate(rhs_vjp_fn(lhs))
+    def obj_fn(U, flat_params):
+        x0, cost_args, dynamics_args = unflatten_params(flat_params)
+        return _objective_template(cost, dynamics, U, x0, cost_args, dynamics_args)
 
-  zeros_like_args = _pytree_zeros_like(args)
-  gradients = unflatten_params(grad_thru_U + grad_thru_X)
-  return (gradients[0],
-          zeros_like_args[1],
-          gradients[1],
-          gradients[2],
-          *zeros_like_args[4:])
+    _, rhs_vjp_fn = jax.vjp(
+        lambda flat_params: jax.grad(obj_fn, argnums=0)(U_star, flat_params),
+        flat_params,
+    )
+    (grad_thru_U,) = _pytree_negate(rhs_vjp_fn(lhs))
+
+    zeros_like_args = _pytree_zeros_like(args)
+    gradients = unflatten_params(grad_thru_U + grad_thru_X)
+    return (
+        gradients[0],
+        zeros_like_args[1],
+        gradients[1],
+        gradients[2],
+        *zeros_like_args[4:],
+    )
+
 
 _ilqr_explicit_vjp.defvjp(
-    _ilqr_explicit_fwd,
-    partial(_ilqr_explicit_bwd, _solve_hess_inv_v_explicit))
+    _ilqr_explicit_fwd, partial(_ilqr_explicit_bwd, _solve_hess_inv_v_explicit)
+)
 
 _ilqr_cg_vjp.defvjp(
-    _ilqr_explicit_fwd,
-    partial(_ilqr_explicit_bwd, _solve_hess_inv_v_cg))
+    _ilqr_explicit_fwd, partial(_ilqr_explicit_bwd, _solve_hess_inv_v_cg)
+)
 
 _ilqr_tvlqr_experimental_vjp.defvjp(
-    _ilqr_explicit_fwd,
-    partial(_ilqr_explicit_bwd, _solve_hess_inv_v_tvlqr))
+    _ilqr_explicit_fwd, partial(_ilqr_explicit_bwd, _solve_hess_inv_v_tvlqr)
+)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1))
 @partial(jit, static_argnums=(0, 1))
-def _ilqr_tvlqr_vjp(cost, dynamics, x0, U, cost_args, dynamics_args, maxiter,
-                    grad_norm_threshold, relative_grad_norm_threshold,
-                    obj_step_threshold, inputs_step_threshold, make_psd,
-                    psd_delta, alpha_0, alpha_min, vjp_options):
-  return _ilqr_template(cost, dynamics, x0, U, cost_args, dynamics_args,
-                        maxiter, grad_norm_threshold,
-                        relative_grad_norm_threshold, obj_step_threshold,
-                        inputs_step_threshold, make_psd, psd_delta, alpha_0,
-                        alpha_min, vjp_options)
+def _ilqr_tvlqr_vjp(
+    cost,
+    dynamics,
+    x0,
+    U,
+    cost_args,
+    dynamics_args,
+    maxiter,
+    grad_norm_threshold,
+    relative_grad_norm_threshold,
+    obj_step_threshold,
+    inputs_step_threshold,
+    make_psd,
+    psd_delta,
+    alpha_0,
+    alpha_min,
+    vjp_options,
+):
+    return _ilqr_template(
+        cost,
+        dynamics,
+        x0,
+        U,
+        cost_args,
+        dynamics_args,
+        maxiter,
+        grad_norm_threshold,
+        relative_grad_norm_threshold,
+        obj_step_threshold,
+        inputs_step_threshold,
+        make_psd,
+        psd_delta,
+        alpha_0,
+        alpha_min,
+        vjp_options,
+    )
 
 
 def _ilqr_tvlqr_fwd(cost, dynamics, *args):
-  """Forward pass of custom vector-Jacobian product implementation."""
-  ilqr_output = _ilqr_template(cost, dynamics, *args)
-  X, U, _, _, adjoints, lqr, _ = ilqr_output
-  return ilqr_output, (args, X, U, adjoints, lqr)
+    """Forward pass of custom vector-Jacobian product implementation."""
+    ilqr_output = _ilqr_template(cost, dynamics, *args)
+    X, U, _, _, adjoints, lqr, _ = ilqr_output
+    return ilqr_output, (args, X, U, adjoints, lqr)
 
 
-def _ilqr_tvlqr_bwd(cost, dynamics, fwd_residuals,
-                    gX_gU_gNonDifferentiableOutputs):
-  """Backward pass of custom vector-Jacobian product implementation."""
-  # TODO(schmrlng): Add gradient of `obj` with respect to inputs.
-  args, X, U, adjoints, lqr = fwd_residuals
-  x0, _, cost_args, dynamics_args = args[:4]
-  gX, gU = gX_gU_gNonDifferentiableOutputs[:2]
+def _ilqr_tvlqr_bwd(cost, dynamics, fwd_residuals, gX_gU_gNonDifferentiableOutputs):
+    """Backward pass of custom vector-Jacobian product implementation."""
+    # TODO(schmrlng): Add gradient of `obj` with respect to inputs.
+    args, X, U, adjoints, lqr = fwd_residuals
+    x0, _, cost_args, dynamics_args = args[:4]
+    gX, gU = gX_gU_gNonDifferentiableOutputs[:2]
 
-  _, _, _, _, _, A, B = lqr
-  timesteps = np.arange(X.shape[0])
+    _, _, _, _, _, A, B = lqr
+    timesteps = np.arange(X.shape[0])
 
-  quadratizer = quadratize(hamiltonian(cost, dynamics), argnums=4)
-  Q, R, M = quadratizer(X, pad(U), timesteps, pad(adjoints), cost_args,
-                        dynamics_args)
+    quadratizer = quadratize(hamiltonian(cost, dynamics), argnums=4)
+    Q, R, M = quadratizer(X, pad(U), timesteps, pad(adjoints), cost_args, dynamics_args)
 
-  c = np.zeros(A.shape[:2])
-  K, k, _, _ = tvlqr(Q, gX, R, gU, M, A, B, c)
-  _, dU = tvlqr_rollout(K, k, np.zeros_like(x0), A, B, c)
+    c = np.zeros(A.shape[:2])
+    K, k, _, _ = tvlqr(Q, gX, R, gU, M, A, B, c)
+    _, dU = tvlqr_rollout(K, k, np.zeros_like(x0), A, B, c)
 
-  vhp = vhp_params(cost)
-  gradients = vhp(pad(dU), X, pad(U), A, B, *cost_args)[1]
-  zeros_like_args = _pytree_zeros_like(args)
-  # TODO(schmrlng): Add gradients with respect to `cost_args` other than the
-  # first, `x0`, and `dynamics_args`.
-  return (zeros_like_args[:2] + ((gradients, *zeros_like_args[2][1:]),) +
-          zeros_like_args[3:])
+    vhp = vhp_params(cost)
+    gradients = vhp(pad(dU), X, pad(U), A, B, *cost_args)[1]
+    zeros_like_args = _pytree_zeros_like(args)
+    # TODO(schmrlng): Add gradients with respect to `cost_args` other than the
+    # first, `x0`, and `dynamics_args`.
+    return (
+        zeros_like_args[:2]
+        + ((gradients, *zeros_like_args[2][1:]),)
+        + zeros_like_args[3:]
+    )
 
 
 _ilqr_tvlqr_vjp.defvjp(_ilqr_tvlqr_fwd, _ilqr_tvlqr_bwd)
 
 
-def _ilqr_template(cost, dynamics, x0, U, cost_args, dynamics_args, maxiter,
-                   grad_norm_threshold, relative_grad_norm_threshold,
-                   obj_step_threshold, inputs_step_threshold, make_psd,
-                   psd_delta, alpha_0, alpha_min, vjp_options):
-  """Internal ilqr implementation. Not meant to be called directly."""
+def _ilqr_template(
+    cost,
+    dynamics,
+    x0,
+    U,
+    cost_args,
+    dynamics_args,
+    maxiter,
+    grad_norm_threshold,
+    relative_grad_norm_threshold,
+    obj_step_threshold,
+    inputs_step_threshold,
+    make_psd,
+    psd_delta,
+    alpha_0,
+    alpha_min,
+    vjp_options,
+):
+    """Internal ilqr implementation. Not meant to be called directly."""
 
-  del vjp_options
+    del vjp_options
 
-  T, _ = U.shape
-  n = x0.shape[0]
+    T, _ = U.shape
+    n = x0.shape[0]
 
-  roll = partial(_rollout, dynamics)
-  quadratizer = quadratize(cost)
-  dynamics_jacobians = linearize(dynamics)
-  cost_gradients = linearize(cost)
-  evaluator = partial(evaluate, cost)
-  psd = vmap(partial(project_psd_cone, delta=psd_delta))
+    roll = partial(_rollout, dynamics)
+    quadratizer = quadratize(cost)
+    dynamics_jacobians = linearize(dynamics)
+    cost_gradients = linearize(cost)
+    evaluator = partial(evaluate, cost)
+    psd = vmap(partial(project_psd_cone, delta=psd_delta))
 
-  X = roll(U, x0, *dynamics_args)
-  timesteps = np.arange(X.shape[0])
-  obj = np.sum(evaluator(X, pad(U), *cost_args))
+    X = roll(U, x0, *dynamics_args)
+    timesteps = np.arange(X.shape[0])
+    obj = np.sum(evaluator(X, pad(U), *cost_args))
 
-  def get_lqr_params(X, U):
-    Q, R, M = quadratizer(X, pad(U), timesteps, *cost_args)
+    def get_lqr_params(X, U):
+        Q, R, M = quadratizer(X, pad(U), timesteps, *cost_args)
 
-    Q = lax.cond(make_psd, Q, psd, Q, lambda x: x)
-    R = lax.cond(make_psd, R, psd, R, lambda x: x)
+        Q = lax.cond(make_psd, Q, psd, Q, lambda x: x)
+        R = lax.cond(make_psd, R, psd, R, lambda x: x)
 
-    q, r = cost_gradients(X, pad(U), timesteps, *cost_args)
-    A, B = dynamics_jacobians(X, pad(U), np.arange(T + 1), *dynamics_args)
+        q, r = cost_gradients(X, pad(U), timesteps, *cost_args)
+        A, B = dynamics_jacobians(X, pad(U), np.arange(T + 1), *dynamics_args)
 
-    return (Q, q, R, r, M, A, B)
+        return (Q, q, R, r, M, A, B)
 
-  c = np.zeros((T, n))  # assumes trajectory is always dynamically feasible.
+    c = np.zeros((T, n))  # assumes trajectory is always dynamically feasible.
 
-  lqr = get_lqr_params(X, U)
-  _, q, _, r, _, A, B = lqr
-  gradient, adjoints, _ = adjoint(A, B, q, r)
-  grad_norm_initial = np.linalg.norm(gradient)
-  grad_norm_threshold = np.maximum(
-      grad_norm_threshold,
-      relative_grad_norm_threshold *
-      np.where(np.isnan(grad_norm_initial), 1.0, grad_norm_initial + 1.0))
-
-  def body(inputs):
-    """Solves LQR subproblem and returns updated trajectory."""
-    X, U, obj, alpha, gradient, adjoints, lqr, iteration, _, _ = inputs
-
-    Q, q, R, r, M, A, B = lqr
-
-    K, k, _, _ = tvlqr(Q, q, R, r, M, A, B, c)
-    X_new, U_new, obj_new, alpha = line_search_ddp(cost, dynamics, X, U, K, k,
-                                                   obj, cost_args,
-                                                   dynamics_args, alpha_0,
-                                                   alpha_min)
+    lqr = get_lqr_params(X, U)
+    _, q, _, r, _, A, B = lqr
     gradient, adjoints, _ = adjoint(A, B, q, r)
-    # print("Iteration=%d, Objective=%f, Alpha=%f, Grad-norm=%f\n" %
-    #      (device_get(iteration), device_get(obj), device_get(alpha),
-    #       device_get(np.linalg.norm(gradient))))
+    grad_norm_initial = np.linalg.norm(gradient)
+    grad_norm_threshold = np.maximum(
+        grad_norm_threshold,
+        relative_grad_norm_threshold
+        * np.where(np.isnan(grad_norm_initial), 1.0, grad_norm_initial + 1.0),
+    )
 
-    lqr = get_lqr_params(X_new, U_new)
-    U_step = np.linalg.norm(U_new - U)
-    obj_step = np.abs(obj_new - obj)
-    iteration = iteration + 1
-    return X_new, U_new, obj_new, alpha, gradient, adjoints, lqr, iteration, obj_step, U_step
+    def body(inputs):
+        """Solves LQR subproblem and returns updated trajectory."""
+        X, U, obj, alpha, gradient, adjoints, lqr, iteration, _, _ = inputs
 
-  def continuation_criterion(inputs):
-    _, U_new, obj_new, alpha, gradient, _, _, iteration, obj_step, U_step = inputs
-    grad_norm = np.linalg.norm(gradient)
-    grad_norm = np.where(np.isnan(grad_norm), np.inf, grad_norm)
+        Q, q, R, r, M, A, B = lqr
 
-    still_improving_obj = obj_step > obj_step_threshold * (
-        np.absolute(obj_new) + 1.0)
-    still_moving_U = U_step > inputs_step_threshold * (
-        np.linalg.norm(U_new) + 1.0)
-    still_progressing = np.logical_and(still_improving_obj, still_moving_U)
-    has_potential_to_improve = np.logical_and(grad_norm > grad_norm_threshold,
-                                              still_progressing)
+        K, k, _, _ = tvlqr(Q, q, R, r, M, A, B, c)
+        X_new, U_new, obj_new, alpha = line_search_ddp(
+            cost,
+            dynamics,
+            X,
+            U,
+            K,
+            k,
+            obj,
+            cost_args,
+            dynamics_args,
+            alpha_0,
+            alpha_min,
+        )
+        gradient, adjoints, _ = adjoint(A, B, q, r)
+        # print("Iteration=%d, Objective=%f, Alpha=%f, Grad-norm=%f\n" %
+        #      (device_get(iteration), device_get(obj), device_get(alpha),
+        #       device_get(np.linalg.norm(gradient))))
 
-    return np.logical_and(
-        iteration < maxiter,
-        np.logical_and(has_potential_to_improve, alpha > alpha_min))
+        lqr = get_lqr_params(X_new, U_new)
+        U_step = np.linalg.norm(U_new - U)
+        obj_step = np.abs(obj_new - obj)
+        iteration = iteration + 1
+        return (
+            X_new,
+            U_new,
+            obj_new,
+            alpha,
+            gradient,
+            adjoints,
+            lqr,
+            iteration,
+            obj_step,
+            U_step,
+        )
 
-  X, U, obj, _, gradient, adjoints, lqr, it, _, _ = lax.while_loop(
-      continuation_criterion, body,
-      (X, U, obj, alpha_0, gradient, adjoints, lqr, 0, np.inf, np.inf))
+    def continuation_criterion(inputs):
+        _, U_new, obj_new, alpha, gradient, _, _, iteration, obj_step, U_step = inputs
+        grad_norm = np.linalg.norm(gradient)
+        grad_norm = np.where(np.isnan(grad_norm), np.inf, grad_norm)
 
-  return X, U, obj, gradient, adjoints, lqr, it
+        still_improving_obj = obj_step > obj_step_threshold * (
+            np.absolute(obj_new) + 1.0
+        )
+        still_moving_U = U_step > inputs_step_threshold * (np.linalg.norm(U_new) + 1.0)
+        still_progressing = np.logical_and(still_improving_obj, still_moving_U)
+        has_potential_to_improve = np.logical_and(
+            grad_norm > grad_norm_threshold, still_progressing
+        )
+
+        return np.logical_and(
+            iteration < maxiter,
+            np.logical_and(has_potential_to_improve, alpha > alpha_min),
+        )
+
+    X, U, obj, _, gradient, adjoints, lqr, it, _, _ = lax.while_loop(
+        continuation_criterion,
+        body,
+        (X, U, obj, alpha_0, gradient, adjoints, lqr, 0, np.inf, np.inf),
+    )
+
+    return X, U, obj, gradient, adjoints, lqr, it
 
 
 def hamiltonian(cost, dynamics):
-  """Returns function to evaluate associated Hamiltonian."""
+    """Returns function to evaluate associated Hamiltonian."""
 
-  def fun(x, u, t, p, cost_args=(), dynamics_args=()):
-    return cost(x, u, t, *cost_args) + np.dot(p,
-                                              dynamics(x, u, t, *dynamics_args))
+    def fun(x, u, t, p, cost_args=(), dynamics_args=()):
+        return cost(x, u, t, *cost_args) + np.dot(p, dynamics(x, u, t, *dynamics_args))
 
-  return fun
+    return fun
 
 
 def vhp_params(cost):
-  """Returns a function that evaluates vector hessian products.
-
-  Args:
-    cost: function with signature cost(x, u, t, *args).
-  """
-  hessian_u_params = jacobian(jax.grad(cost, argnums=1), argnums=3)
-  hessian_x_params = jacobian(jax.grad(cost, argnums=0), argnums=3)
-
-  def vhp(vector, X, U, A, B, *args):
-    """Evaluates vector hessian products.
+    """Returns a function that evaluates vector hessian products.
 
     Args:
-      vector: input vector to compute vector hessian products.
-      X: [T+1, n] state trajectory.
-      U: [T, m] control trajectory.
-      A: dynamics Jacobians wrt states.
-      B: dynamics Jacobians wrt controls.
-      *args: additional arguments passed to cost.
+      cost: function with signature cost(x, u, t, *args).
+    """
+    hessian_u_params = jacobian(jax.grad(cost, argnums=1), argnums=3)
+    hessian_x_params = jacobian(jax.grad(cost, argnums=0), argnums=3)
+
+    def vhp(vector, X, U, A, B, *args):
+        """Evaluates vector hessian products.
+
+        Args:
+          vector: input vector to compute vector hessian products.
+          X: [T+1, n] state trajectory.
+          U: [T, m] control trajectory.
+          A: dynamics Jacobians wrt states.
+          B: dynamics Jacobians wrt controls.
+          *args: additional arguments passed to cost.
+
+        Returns:
+          Tuple
+        """
+        T = X.shape[0] - 1
+        params = args[0]
+        gradient = jax.tree.map(np.zeros_like, params)
+        Cx = hessian_x_params(X[T], U[T], T, *args)
+        contract = lambda x, y: np.tensordot(x, y, (-1, 0))
+
+        def body(tt, inputs):
+            """Accumulates vector hessian product over all time steps."""
+            P, g = inputs
+            t = T - 1 - tt
+            Cx = hessian_x_params(X[t], U[t], t, *args)
+            Cu = hessian_u_params(X[t], U[t], t, *args)
+            w = np.matmul(B[t], vector[t])
+            g = jax.tree.map(
+                lambda P_, g_, Cu_: g_ + contract(vector[t], Cu_) + contract(w, P_),
+                P,
+                g,
+                Cu,
+            )
+            P = jax.tree.map(lambda P_, Cx_: contract(A[t].T, P_) + Cx_, P, Cx)
+            return P, g
+
+        return lax.fori_loop(0, T, body, (Cx, gradient))
+
+    return vhp
+
+
+def scipy_minimize(
+    cost, dynamics, x0, U, method="CG", bounds=None, options=None, callback=None
+):
+    """First Order Optimizers from scipy.optimize.minimize for Optimal Control.
+
+    Args:
+      cost:      cost(x, u, t) returns scalar.
+      dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
+      x0: initial_state - 1D np array of shape (n, ).
+      U: initial_controls - 2D np array of shape (T, m).
+      method: 'CG', 'Newton-CG', 'BFGS', 'LBFGS'
+      bounds: Passed to scipy.optimize.minimize for bound constraints.
+      options: dictionary of solver options.
+      callback: called after each iteration. See scipy.optimize.minimize docs.
 
     Returns:
-      Tuple
+      X: optimal state trajectory - nd array of shape (T+1, n).
+      U: optimal control trajectory - nd array of shape (T, m).
+      obj: final objective achieved.
+      gradient: gradient at the solution returned.
+      iteration: number of iterations upon convergence.
     """
-    T = X.shape[0] - 1
-    params = args[0]
-    gradient = jax.tree_map(np.zeros_like, params)
-    Cx = hessian_x_params(X[T], U[T], T, *args)
-    contract = lambda x, y: np.tensordot(x, y, (-1, 0))
 
-    def body(tt, inputs):
-      """Accumulates vector hessian product over all time steps."""
-      P, g = inputs
-      t = T - 1 - tt
-      Cx = hessian_x_params(X[t], U[t], t, *args)
-      Cu = hessian_u_params(X[t], U[t], t, *args)
-      w = np.matmul(B[t], vector[t])
-      g = jax.tree_map(
-          lambda P_, g_, Cu_: g_ + contract(vector[t], Cu_) + contract(w, P_),
-          P, g, Cu)
-      P = jax.tree_map(lambda P_, Cx_: contract(A[t].T, P_) + Cx_, P, Cx)
-      return P, g
+    obj_fn = jit(partial(objective, cost, dynamics))
+    grad_fn = jit(
+        partial(grad_wrt_controls, cost, dynamics, cost_args=(), dynamics_args=())
+    )
+    T, m = U.shape
 
-    return lax.fori_loop(0, T, body, (Cx, gradient))
+    def fun(u):
+        return device_get(obj_fn(u.reshape((T, m)), x0))
 
-  return vhp
+    def grad_fun(u):
+        return device_get(grad_fn(u.reshape((T, m)), x0)).flatten()
 
+    hvp_fn = jit(partial(hvp, cost, dynamics, cost_args=(), dynamics_args=()))
 
-def scipy_minimize(cost,
-                   dynamics,
-                   x0,
-                   U,
-                   method='CG',
-                   bounds=None,
-                   options=None,
-                   callback=None):
-  """First Order Optimizers from scipy.optimize.minimize for Optimal Control.
+    def hess_vec_prod(u, v):
+        return device_get(hvp_fn(u.reshape((T, m)), x0, v.reshape((T, m)))[1]).flatten()
 
-  Args:
-    cost:      cost(x, u, t) returns scalar.
-    dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
-    x0: initial_state - 1D np array of shape (n, ).
-    U: initial_controls - 2D np array of shape (T, m).
-    method: 'CG', 'Newton-CG', 'BFGS', 'LBFGS'
-    bounds: Passed to scipy.optimize.minimize for bound constraints.
-    options: dictionary of solver options.
-    callback: called after each iteration. See scipy.optimize.minimize docs.
+    hessp = hess_vec_prod if method == "Newton-CG" else None
 
-  Returns:
-    X: optimal state trajectory - nd array of shape (T+1, n).
-    U: optimal control trajectory - nd array of shape (T, m).
-    obj: final objective achieved.
-    gradient: gradient at the solution returned.
-    iteration: number of iterations upon convergence.
-  """
+    res = osp_optimize.minimize(
+        fun,
+        U.flatten(),
+        method=method,
+        jac=grad_fun,
+        hessp=hessp,
+        bounds=bounds,
+        options=options,
+        callback=callback,
+    )
+    uopt = res.x
+    U = uopt.reshape((T, m))
+    X = rollout(dynamics, U, x0)
 
-  obj_fn = jit(partial(objective, cost, dynamics))
-  grad_fn = jit(partial(grad_wrt_controls, cost, dynamics,
-                        cost_args=(), dynamics_args=()))
-  T, m = U.shape
-
-  def fun(u):
-    return device_get(obj_fn(u.reshape((T, m)), x0))
-
-  def grad_fun(u):
-    return device_get(grad_fn(u.reshape((T, m)), x0)).flatten()
-
-  hvp_fn = jit(partial(hvp, cost, dynamics, cost_args=(), dynamics_args=()))
-
-  def hess_vec_prod(u, v):
-    return device_get(
-        hvp_fn(
-            u.reshape((T, m)), x0, v.reshape((T, m)))[1]).flatten()
-
-  hessp = hess_vec_prod if method == 'Newton-CG' else None
-
-  res = osp_optimize.minimize(
-      fun,
-      U.flatten(),
-      method=method,
-      jac=grad_fun,
-      hessp=hessp,
-      bounds=bounds,
-      options=options,
-      callback=callback)
-  uopt = res.x
-  U = uopt.reshape((T, m))
-  X = rollout(dynamics, U, x0)
-
-  return X, U, res.fun, res.jac, res.nit
+    return X, U, res.fun, res.jac, res.nit
 
 
 # Sampling based Zeroth Order Optimization via Cross-Entropy Method
 
 
 def default_cem_hyperparams():
-  return {
-      'sampling_smoothing': 0.,
-      'evolution_smoothing': 0.1,
-      'elite_portion': 0.1,
-      'max_iter': 10,
-      'num_samples': 400
-  }
+    return {
+        "sampling_smoothing": 0.0,
+        "evolution_smoothing": 0.1,
+        "elite_portion": 0.1,
+        "max_iter": 10,
+        "num_samples": 400,
+    }
 
 
 @partial(jit, static_argnums=(4,))
 def cem_update_mean_stdev(old_mean, old_stdev, controls, costs, hyperparams):
-  """Computes new mean and standard deviation from elite samples."""
-  num_samples = hyperparams['num_samples']
-  num_elites = int(num_samples * hyperparams['elite_portion'])
-  best_control_idx = np.argsort(costs)[:num_elites]
-  elite_controls = controls[best_control_idx]
-  new_mean = np.mean(elite_controls, axis=0)
-  new_stdev = np.std(elite_controls, axis=0)
-  updated_mean = hyperparams['evolution_smoothing'] * old_mean + (
-      1 - hyperparams['evolution_smoothing']) * new_mean
-  updated_stdev = hyperparams['evolution_smoothing'] * old_stdev + (
-      1 - hyperparams['evolution_smoothing']) * new_stdev
-  return updated_mean, updated_stdev
+    """Computes new mean and standard deviation from elite samples."""
+    num_samples = hyperparams["num_samples"]
+    num_elites = int(num_samples * hyperparams["elite_portion"])
+    best_control_idx = np.argsort(costs)[:num_elites]
+    elite_controls = controls[best_control_idx]
+    new_mean = np.mean(elite_controls, axis=0)
+    new_stdev = np.std(elite_controls, axis=0)
+    updated_mean = (
+        hyperparams["evolution_smoothing"] * old_mean
+        + (1 - hyperparams["evolution_smoothing"]) * new_mean
+    )
+    updated_stdev = (
+        hyperparams["evolution_smoothing"] * old_stdev
+        + (1 - hyperparams["evolution_smoothing"]) * new_stdev
+    )
+    return updated_mean, updated_stdev
 
 
 @partial(jit, static_argnums=(5,))
-def gaussian_samples(random_key, mean, stdev, control_low, control_high,
-                     hyperparams):
-  """Samples a batch of controls based on Gaussian distribution.
+def gaussian_samples(random_key, mean, stdev, control_low, control_high, hyperparams):
+    """Samples a batch of controls based on Gaussian distribution.
 
-  Args:
-    random_key: a jax.random.PRNGKey() random seed
-    mean: mean of control sequence, has dimension (horizion, dim_control).
-    stdev: stdev of control sequence, has dimension (horizon, dim_control).
-    control_low: lower bound of control space.
-    control_high: upper bound of control space.
-    hyperparams: dictionary of hyperparameters with following keys: num_samples
-      -- number of control sequences to sample sampling_smoothing -- a number in
-      [0, 1] to control amount of smoothing,
-        see eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for more details.
+    Args:
+      random_key: a jax.random.PRNGKey() random seed
+      mean: mean of control sequence, has dimension (horizion, dim_control).
+      stdev: stdev of control sequence, has dimension (horizon, dim_control).
+      control_low: lower bound of control space.
+      control_high: upper bound of control space.
+      hyperparams: dictionary of hyperparameters with following keys: num_samples
+        -- number of control sequences to sample sampling_smoothing -- a number in
+        [0, 1] to control amount of smoothing,
+          see eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for more details.
 
-  Returns:
-    Array of sampled controls, with dimension (num_samples, horizon,
-    dim_control).
-  """
-  num_samples = hyperparams['num_samples']
-  horizon = mean.shape[0]
-  dim_control = mean.shape[1]
-  noises = jax.random.normal(
-      random_key, shape=(num_samples, horizon, dim_control))
-  # Smoothens noise along time axis.
-  smoothing_coef = hyperparams['sampling_smoothing']
+    Returns:
+      Array of sampled controls, with dimension (num_samples, horizon,
+      dim_control).
+    """
+    num_samples = hyperparams["num_samples"]
+    horizon = mean.shape[0]
+    dim_control = mean.shape[1]
+    noises = jax.random.normal(random_key, shape=(num_samples, horizon, dim_control))
+    # Smoothens noise along time axis.
+    smoothing_coef = hyperparams["sampling_smoothing"]
 
-  def body_fun(t, noises):
-    return noises.at[:, t].set(smoothing_coef * noises[:, t - 1] +
-                               np.sqrt(1 - smoothing_coef**2) * noises[:, t])
+    def body_fun(t, noises):
+        return noises.at[:, t].set(
+            smoothing_coef * noises[:, t - 1]
+            + np.sqrt(1 - smoothing_coef**2) * noises[:, t]
+        )
 
-  noises = jax.lax.fori_loop(1, horizon, body_fun, noises)
-  samples = noises * stdev
-  samples = samples + mean
-  control_low = jax.lax.broadcast(control_low, samples.shape[:-1])
-  control_high = jax.lax.broadcast(control_high, samples.shape[:-1])
-  samples = np.clip(samples, control_low, control_high)
-  return samples
+    noises = jax.lax.fori_loop(1, horizon, body_fun, noises)
+    samples = noises * stdev
+    samples = samples + mean
+    control_low = jax.lax.broadcast(control_low, samples.shape[:-1])
+    control_high = jax.lax.broadcast(control_high, samples.shape[:-1])
+    samples = np.clip(samples, control_low, control_high)
+    return samples
 
 
 @partial(jit, static_argnums=(0, 1))
-def cem(cost,
-        dynamics,
-        init_state,
-        init_controls,
-        control_low,
-        control_high,
-        random_key=None,
-        hyperparams=None):
-  """Cross Entropy Method (CEM).
+def cem(
+    cost,
+    dynamics,
+    init_state,
+    init_controls,
+    control_low,
+    control_high,
+    random_key=None,
+    hyperparams=None,
+):
+    """Cross Entropy Method (CEM).
 
-  CEM is a sampling-based optimization algorithm. At each iteration, CEM samples
-  a batch of candidate actions and computes the mean and standard deviation of
-  top-performing samples, which are used to sample from in the next iteration.
+    CEM is a sampling-based optimization algorithm. At each iteration, CEM samples
+    a batch of candidate actions and computes the mean and standard deviation of
+    top-performing samples, which are used to sample from in the next iteration.
 
-  Args:
-    cost: cost(x, u, t) returns a scalar
-    dynamics: dynamics(x, u, t) returns next state
-    init_state: initial state
-    init_controls: initial controls, of the shape (horizon, dim_control)
-    control_low: lower bound of control space
-    control_high: upper bound of control space
-    random_key: jax.random.PRNGKey() that serves as a random seed
-    hyperparams: a dictionary of algorithm hyperparameters with following keys
-      sampling_smoothing -- amount of smoothing in action sampling. Refer to
-                          eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for
-                            more details. evolution_smoothing -- amount of
-                            smoothing in updating mean and standard deviation
-                            elite_portion -- proportion of samples that is
-                            considered elites max_iter -- maximum number of
-                            iterations num_samples -- number of action sequences
-                            sampled
+    Args:
+      cost: cost(x, u, t) returns a scalar
+      dynamics: dynamics(x, u, t) returns next state
+      init_state: initial state
+      init_controls: initial controls, of the shape (horizon, dim_control)
+      control_low: lower bound of control space
+      control_high: upper bound of control space
+      random_key: jax.random.PRNGKey() that serves as a random seed
+      hyperparams: a dictionary of algorithm hyperparameters with following keys
+        sampling_smoothing -- amount of smoothing in action sampling. Refer to
+                            eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for
+                              more details. evolution_smoothing -- amount of
+                              smoothing in updating mean and standard deviation
+                              elite_portion -- proportion of samples that is
+                              considered elites max_iter -- maximum number of
+                              iterations num_samples -- number of action sequences
+                              sampled
 
-  Returns:
-    X: Optimal state trajectory.
-    U: Optimized control sequence, an array of shape (horizon, dim_control)
-    obj: scalar objective achieved.
-  """
-  if random_key is None:
-    random_key = random.PRNGKey(0)
-  if hyperparams is None:
-    hyperparams = default_cem_hyperparams()
-  mean = np.array(init_controls)
-  stdev = np.array([(control_high - control_low) / 2.] * init_controls.shape[0])
-  obj_fn = partial(objective, cost, dynamics)
+    Returns:
+      X: Optimal state trajectory.
+      U: Optimized control sequence, an array of shape (horizon, dim_control)
+      obj: scalar objective achieved.
+    """
+    if random_key is None:
+        random_key = random.PRNGKey(0)
+    if hyperparams is None:
+        hyperparams = default_cem_hyperparams()
+    mean = np.array(init_controls)
+    stdev = np.array([(control_high - control_low) / 2.0] * init_controls.shape[0])
+    obj_fn = partial(objective, cost, dynamics)
 
-  def loop_body(_, args):
-    mean, stdev, random_key = args
-    random_key, rng = random.split(random_key)
-    controls = gaussian_samples(rng, mean, stdev, control_low, control_high,
-                                hyperparams)
+    def loop_body(_, args):
+        mean, stdev, random_key = args
+        random_key, rng = random.split(random_key)
+        controls = gaussian_samples(
+            rng, mean, stdev, control_low, control_high, hyperparams
+        )
+        costs = vmap(obj_fn, in_axes=(0, None))(controls, init_state)
+        mean, stdev = cem_update_mean_stdev(mean, stdev, controls, costs, hyperparams)
+        return mean, stdev, random_key
+
+    # TODO(sindhwani): swap with lax.scan to make this optimizer differentiable.
+    mean, stdev, random_key = lax.fori_loop(
+        0, hyperparams["max_iter"], loop_body, (mean, stdev, random_key)
+    )
+
+    X = rollout(dynamics, mean, init_state)
+    obj = objective(cost, dynamics, mean, init_state)
+    return X, mean, obj
+
+
+@partial(jit, static_argnums=(0, 1))
+def random_shooting(
+    cost,
+    dynamics,
+    init_state,
+    init_controls,
+    control_low,
+    control_high,
+    random_key=None,
+    hyperparams=None,
+):
+    """Random shooting method.
+
+    Random shooting is a very simple optimization procedure where the function
+    to be optimzied is evaluated at K random points and the point with the lowest
+    cost is declared to be the optimal value. This method applies random shooting
+    to trajectory optimization.
+
+    Args:
+      cost: cost(x, u, t) returns a scalar
+      dynamics: dynamics(x, u, t) returns next state
+      init_state: initial state
+      init_controls: initial controls, of the shape (horizon, dim_control)
+      control_low: lower bound of control space
+      control_high: upper bound of control space
+      random_key: jax.random.PRNGKey() that serves as a random seed
+      hyperparams: a dictionary of algorithm hyperparameters with following keys
+        sampling_smoothing -- amount of smoothing in action sampling. Refer to
+                            eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for
+                              more details. num_samples -- number of action
+                              sequences sampled
+
+    Returns:
+      X: Optimal state trajectory.
+      U: Optimized control sequence, an array of shape (horizon, dim_control)
+      obj: scalar objective achieved.
+    """
+    if random_key is None:
+        random_key = random.PRNGKey(0)
+    if hyperparams is None:
+        hyperparams = default_cem_hyperparams()
+    mean = np.array(init_controls)
+    stdev = np.array([(control_high - control_low) / 2.0] * init_controls.shape[0])
+    obj_fn = partial(_objective, cost, dynamics)
+    controls = gaussian_samples(
+        random_key, mean, stdev, control_low, control_high, hyperparams
+    )
     costs = vmap(obj_fn, in_axes=(0, None))(controls, init_state)
-    mean, stdev = cem_update_mean_stdev(mean, stdev, controls, costs,
-                                        hyperparams)
-    return mean, stdev, random_key
+    best_idx = np.argmin(costs)
 
-  # TODO(sindhwani): swap with lax.scan to make this optimizer differentiable.
-  mean, stdev, random_key = lax.fori_loop(0, hyperparams['max_iter'], loop_body,
-                                          (mean, stdev, random_key))
-
-  X = rollout(dynamics, mean, init_state)
-  obj = objective(cost, dynamics, mean, init_state)
-  return X, mean, obj
-
-
-@partial(jit, static_argnums=(0, 1))
-def random_shooting(cost,
-                    dynamics,
-                    init_state,
-                    init_controls,
-                    control_low,
-                    control_high,
-                    random_key=None,
-                    hyperparams=None):
-  """Random shooting method.
-
-  Random shooting is a very simple optimization procedure where the function
-  to be optimzied is evaluated at K random points and the point with the lowest
-  cost is declared to be the optimal value. This method applies random shooting
-  to trajectory optimization.
-
-  Args:
-    cost: cost(x, u, t) returns a scalar
-    dynamics: dynamics(x, u, t) returns next state
-    init_state: initial state
-    init_controls: initial controls, of the shape (horizon, dim_control)
-    control_low: lower bound of control space
-    control_high: upper bound of control space
-    random_key: jax.random.PRNGKey() that serves as a random seed
-    hyperparams: a dictionary of algorithm hyperparameters with following keys
-      sampling_smoothing -- amount of smoothing in action sampling. Refer to
-                          eq. 3-4 in https://arxiv.org/pdf/1907.03613.pdf for
-                            more details. num_samples -- number of action
-                            sequences sampled
-
-  Returns:
-    X: Optimal state trajectory.
-    U: Optimized control sequence, an array of shape (horizon, dim_control)
-    obj: scalar objective achieved.
-  """
-  if random_key is None:
-    random_key = random.PRNGKey(0)
-  if hyperparams is None:
-    hyperparams = default_cem_hyperparams()
-  mean = np.array(init_controls)
-  stdev = np.array([(control_high - control_low) / 2.] * init_controls.shape[0])
-  obj_fn = partial(_objective, cost, dynamics)
-  controls = gaussian_samples(random_key, mean, stdev, control_low,
-                              control_high, hyperparams)
-  costs = vmap(obj_fn, in_axes=(0, None))(controls, init_state)
-  best_idx = np.argmin(costs)
-
-  U = controls[best_idx]
-  X = rollout(dynamics, mean, init_state)
-  obj = objective(cost, dynamics, mean, init_state)
-  return X, U, obj
+    U = controls[best_idx]
+    X = rollout(dynamics, mean, init_state)
+    obj = objective(cost, dynamics, mean, init_state)
+    return X, U, obj
 
 
 # Constrained Iterative LQR
 
 
-@partial(jit, static_argnums=(0, 1, 4, 5, 12,))
-def constrained_ilqr(cost,
-                     dynamics,
-                     x0,
-                     U,
-                     equality_constraint=lambda x, u, t: np.empty(1),
-                     inequality_constraint=lambda x, u, t: np.empty(1),
-                     maxiter_al=5,
-                     maxiter_ilqr=100,
-                     grad_norm_threshold=1.0e-4,
-                     relative_grad_norm_threshold=0.0,
-                     obj_step_threshold=0.0,
-                     inputs_step_threshold=0.0,
-                     constraints_threshold=1.0e-2,
-                     penalty_init=1.0,
-                     penalty_update_rate=10.0,
-                     make_psd=True,
-                     psd_delta=0.0,
-                     alpha_0=1.0,
-                     alpha_min=0.00005):
-  """Constrained Iterative Linear Quadratic Regulator.
+@partial(
+    jit,
+    static_argnums=(
+        0,
+        1,
+        4,
+        5,
+        12,
+    ),
+)
+def constrained_ilqr(
+    cost,
+    dynamics,
+    x0,
+    U,
+    equality_constraint=lambda x, u, t: np.empty(1),
+    inequality_constraint=lambda x, u, t: np.empty(1),
+    maxiter_al=5,
+    maxiter_ilqr=100,
+    grad_norm_threshold=1.0e-4,
+    relative_grad_norm_threshold=0.0,
+    obj_step_threshold=0.0,
+    inputs_step_threshold=0.0,
+    constraints_threshold=1.0e-2,
+    penalty_init=1.0,
+    penalty_update_rate=10.0,
+    make_psd=True,
+    psd_delta=0.0,
+    alpha_0=1.0,
+    alpha_min=0.00005,
+):
+    """Constrained Iterative Linear Quadratic Regulator.
 
-  Args:
-    cost:      cost(x, u, t) returns scalar.
-    dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
-    x0: initial_state - 1D np array of shape (n, ); should satisfy constraints
-      at t == 0.
+    Args:
+      cost:      cost(x, u, t) returns scalar.
+      dynamics:  dynamics(x, u, t) returns next state (n, ) nd array.
+      x0: initial_state - 1D np array of shape (n, ); should satisfy constraints
+        at t == 0.
 
-    U: initial_controls - 2D np array of shape (T, m); this input does not have
-      to be initially feasible.
-    equality_constraint: equality_constraint(x, u, t) == 0 returns
-      (num_equality, ) nd array.
-    inequality_constraint: inequality_constraint(x, u, t) <= 0 returns
-      (num_inequality, ) nd array.
-    maxiter_al: maximum number of outer-loop augmented Lagrangian dual and
-      penalty updates.
-    maxiter_ilqr: maximum iterations for iLQR.
-    grad_norm_threshold: tolerance for stopping iLQR optimization
-      before augmented Lagrangian update.
-    relative_grad_norm_threshold: tolerance on gradient norm for stopping
-      optimization, relative to the gradient norm at the initial guess,
-      before augmented Lagrangian update.
-    obj_step_threshold: tolerance on objective value steps for stopping
-      optimization, relative to the objective value itself.
-    inputs_step_threshold: tolerance on input steps for stopping
-      optimization, relative to the initial input (aka controls). iterations
-      stop with the last iteration did not move the controls by more than this
-      given fraction of the `initial_controls`.
-    constraints_threshold: tolerance for constraint violation (infinity norm).
-    penalty_init: initial penalty value.
-    penalty_update_rate: update rate for increasing penalty.
-    make_psd: whether to zero negative eigenvalues after quadratization.
-    psd_delta: The delta value to make the problem PSD. Specifically, it will
-      ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
-      with respect to state and control are always positive definite.
-    alpha_0: initial line search value.
-    alpha_min: minimum line search value.
+      U: initial_controls - 2D np array of shape (T, m); this input does not have
+        to be initially feasible.
+      equality_constraint: equality_constraint(x, u, t) == 0 returns
+        (num_equality, ) nd array.
+      inequality_constraint: inequality_constraint(x, u, t) <= 0 returns
+        (num_inequality, ) nd array.
+      maxiter_al: maximum number of outer-loop augmented Lagrangian dual and
+        penalty updates.
+      maxiter_ilqr: maximum iterations for iLQR.
+      grad_norm_threshold: tolerance for stopping iLQR optimization
+        before augmented Lagrangian update.
+      relative_grad_norm_threshold: tolerance on gradient norm for stopping
+        optimization, relative to the gradient norm at the initial guess,
+        before augmented Lagrangian update.
+      obj_step_threshold: tolerance on objective value steps for stopping
+        optimization, relative to the objective value itself.
+      inputs_step_threshold: tolerance on input steps for stopping
+        optimization, relative to the initial input (aka controls). iterations
+        stop with the last iteration did not move the controls by more than this
+        given fraction of the `initial_controls`.
+      constraints_threshold: tolerance for constraint violation (infinity norm).
+      penalty_init: initial penalty value.
+      penalty_update_rate: update rate for increasing penalty.
+      make_psd: whether to zero negative eigenvalues after quadratization.
+      psd_delta: The delta value to make the problem PSD. Specifically, it will
+        ensure that d^2c/dx^2 and d^2c/du^2, i.e. the hessian of cost function
+        with respect to state and control are always positive definite.
+      alpha_0: initial line search value.
+      alpha_min: minimum line search value.
 
-  Returns:
-    X: optimal state trajectory - nd array of shape (T+1, n).
-    U: optimal control trajectory - nd array of shape (T, m).
-    dual_equality: approximate dual (equality) trajectory - nd array of shape
-      (T+1, num_equality).
-    dual_inequality: approximate dual (inequality) trajectory nd array of shape
-      (T+1, num_inequality).
-    penalty: final penalty value.
-    equality_constraints: final constraint (equality) violation trajectory - nd
-      array of shape (T+1, num_equality).
-    inequality_constraints: final constraint (inequality) violation trajectory -
-      nd array of shape (T+1, num_inequality).
-    max_constraint_violation: maximum equality or inequality violation.
-    obj: final augmented Lagrangian objective achieved.
-    gradient: gradient at the solution returned.
-    iteration_ilqr: cumulative number of iLQR iterations for entire constrained
-      solve upon convergence.
-    iteration_al: number of augmented Lagrangian outer-loop iterations upon
-      convergence.
+    Returns:
+      X: optimal state trajectory - nd array of shape (T+1, n).
+      U: optimal control trajectory - nd array of shape (T, m).
+      dual_equality: approximate dual (equality) trajectory - nd array of shape
+        (T+1, num_equality).
+      dual_inequality: approximate dual (inequality) trajectory nd array of shape
+        (T+1, num_inequality).
+      penalty: final penalty value.
+      equality_constraints: final constraint (equality) violation trajectory - nd
+        array of shape (T+1, num_equality).
+      inequality_constraints: final constraint (inequality) violation trajectory -
+        nd array of shape (T+1, num_inequality).
+      max_constraint_violation: maximum equality or inequality violation.
+      obj: final augmented Lagrangian objective achieved.
+      gradient: gradient at the solution returned.
+      iteration_ilqr: cumulative number of iLQR iterations for entire constrained
+        solve upon convergence.
+      iteration_al: number of augmented Lagrangian outer-loop iterations upon
+        convergence.
 
-  """
+    """
 
-  # horizon
-  horizon = len(U) + 1
-  t_range = np.arange(horizon)
+    # horizon
+    horizon = len(U) + 1
+    t_range = np.arange(horizon)
 
-  # rollout
-  X = rollout(dynamics, U, x0)
+    # rollout
+    X = rollout(dynamics, U, x0)
 
-  # augmented Lagrangian methods
-  def augmented_lagrangian(x, u, t, dual_equality, dual_inequality, penalty):
-    # stage cost
-    J = cost(x, u, t)
+    # augmented Lagrangian methods
+    def augmented_lagrangian(x, u, t, dual_equality, dual_inequality, penalty):
+        # stage cost
+        J = cost(x, u, t)
 
-    # stage equality constraint
-    equality = equality_constraint(x, u, t)
+        # stage equality constraint
+        equality = equality_constraint(x, u, t)
 
-    # stage inequality constraint
-    inequality = inequality_constraint(x, u, t)
+        # stage inequality constraint
+        inequality = inequality_constraint(x, u, t)
 
-    # active set
-    active_set = np.invert(
-        np.isclose(dual_inequality[t], 0.0) & (inequality < 0.0))
+        # active set
+        active_set = np.invert(np.isclose(dual_inequality[t], 0.0) & (inequality < 0.0))
 
-    # update cost
-    # TODO(taylorhowell): Gauss-Newton approximation for constraints,
-    # specifically in the Hessian of the objective
-    J += dual_equality[t].T @ equality + 0.5 * penalty * equality.T @ equality
-    J += dual_inequality[t].T @ inequality + 0.5 * penalty * inequality.T @ (
-        active_set * inequality)
+        # update cost
+        # TODO(taylorhowell): Gauss-Newton approximation for constraints,
+        # specifically in the Hessian of the objective
+        J += dual_equality[t].T @ equality + 0.5 * penalty * equality.T @ equality
+        J += dual_inequality[t].T @ inequality + 0.5 * penalty * inequality.T @ (
+            active_set * inequality
+        )
 
-    return J
+        return J
 
-  def dual_update(constraint, dual, penalty):
-    return dual + penalty * constraint
+    def dual_update(constraint, dual, penalty):
+        return dual + penalty * constraint
 
-  def inequality_projection(dual):
-    return np.maximum(dual, 0.0)
+    def inequality_projection(dual):
+        return np.maximum(dual, 0.0)
 
-  # vectorize
-  equality_constraint_mapped = vectorize(equality_constraint)
-  inequality_constraint_mapped = vectorize(inequality_constraint)
-  dual_update_mapped = vmap(dual_update, in_axes=(0, 0, None))
+    # vectorize
+    equality_constraint_mapped = vectorize(equality_constraint)
+    inequality_constraint_mapped = vectorize(inequality_constraint)
+    dual_update_mapped = vmap(dual_update, in_axes=(0, 0, None))
 
-  # evaluate constraints
-  U_pad = pad(U)
-  equality_constraints = equality_constraint_mapped(X, U_pad, t_range)
-  inequality_constraints = inequality_constraint_mapped(X, U_pad, t_range)
-
-  # initialize dual variables
-  dual_equality = np.zeros_like(equality_constraints)
-  dual_inequality = np.zeros_like(inequality_constraints)
-
-  # initialize penalty
-  penalty = penalty_init
-
-  def body(inputs):
-    # unpack
-    _, U, dual_equality, dual_inequality, penalty, equality_constraints, inequality_constraints, _, _, _, iteration_ilqr, iteration_al = inputs
-
-    # augmented Lagrangian parameters
-    al_args = {
-        'dual_equality': dual_equality,
-        'dual_inequality': dual_inequality,
-        'penalty': penalty,
-    }
-
-    # solve iLQR problem
-    X, U, obj, gradient, _, _, iteration = ilqr(
-        partial(augmented_lagrangian, **al_args),
-        dynamics,
-        x0,
-        U,
-        grad_norm_threshold=grad_norm_threshold,
-        relative_grad_norm_threshold=relative_grad_norm_threshold,
-        obj_step_threshold=obj_step_threshold,
-        inputs_step_threshold=inputs_step_threshold,
-        make_psd=make_psd,
-        psd_delta=psd_delta,
-        alpha_0=alpha_0,
-        alpha_min=alpha_min,
-        maxiter=maxiter_ilqr)
-
-    # evalute constraints
+    # evaluate constraints
     U_pad = pad(U)
-
     equality_constraints = equality_constraint_mapped(X, U_pad, t_range)
-
     inequality_constraints = inequality_constraint_mapped(X, U_pad, t_range)
-    inequality_constraints_projected = inequality_projection(
-        inequality_constraints)
 
-    max_constraint_violation = np.maximum(
-        np.max(np.abs(equality_constraints)),
-        np.max(inequality_constraints_projected))
+    # initialize dual variables
+    dual_equality = np.zeros_like(equality_constraints)
+    dual_inequality = np.zeros_like(inequality_constraints)
 
-    # augmented Lagrangian update
-    dual_equality = dual_update_mapped(equality_constraints, dual_equality,
-                                       penalty)
+    # initialize penalty
+    penalty = penalty_init
 
-    dual_inequality = dual_update_mapped(inequality_constraints,
-                                         dual_inequality, penalty)
-    dual_inequality = inequality_projection(dual_inequality)
+    def body(inputs):
+        # unpack
+        (
+            _,
+            U,
+            dual_equality,
+            dual_inequality,
+            penalty,
+            equality_constraints,
+            inequality_constraints,
+            _,
+            _,
+            _,
+            iteration_ilqr,
+            iteration_al,
+        ) = inputs
 
-    penalty *= penalty_update_rate
+        # augmented Lagrangian parameters
+        al_args = {
+            "dual_equality": dual_equality,
+            "dual_inequality": dual_inequality,
+            "penalty": penalty,
+        }
 
-    # increment
-    iteration_ilqr += iteration
-    iteration_al += 1
+        # solve iLQR problem
+        X, U, obj, gradient, _, _, iteration = ilqr(
+            partial(augmented_lagrangian, **al_args),
+            dynamics,
+            x0,
+            U,
+            grad_norm_threshold=grad_norm_threshold,
+            relative_grad_norm_threshold=relative_grad_norm_threshold,
+            obj_step_threshold=obj_step_threshold,
+            inputs_step_threshold=inputs_step_threshold,
+            make_psd=make_psd,
+            psd_delta=psd_delta,
+            alpha_0=alpha_0,
+            alpha_min=alpha_min,
+            maxiter=maxiter_ilqr,
+        )
 
-    return X, U, dual_equality, dual_inequality, penalty, equality_constraints, inequality_constraints, max_constraint_violation, obj, gradient, iteration_ilqr, iteration_al
+        # evalute constraints
+        U_pad = pad(U)
 
-  def continuation_criteria(inputs):
-    # unpack
-    dual_inequality = inputs[3]
-    inequality_constraints = inputs[6]
-    max_constraint_violation = inputs[7]
-    iteration_al = inputs[11]
-    max_complementary_slack = np.max(
-        np.abs(inequality_constraints * dual_inequality))
-    # check maximum constraint violation and augmented Lagrangian iterations
-    return np.logical_and(iteration_al < maxiter_al,
-                          np.logical_or(
-                              max_constraint_violation > constraints_threshold,
-                              max_complementary_slack > constraints_threshold))
+        equality_constraints = equality_constraint_mapped(X, U_pad, t_range)
 
-  return lax.while_loop(
-      continuation_criteria, body,
-      (X, U, dual_equality, dual_inequality, penalty,
-       equality_constraints, inequality_constraints, np.inf, np.inf,
-       np.full(U.shape, np.inf), 0, 0))
+        inequality_constraints = inequality_constraint_mapped(X, U_pad, t_range)
+        inequality_constraints_projected = inequality_projection(inequality_constraints)
+
+        max_constraint_violation = np.maximum(
+            np.max(np.abs(equality_constraints)),
+            np.max(inequality_constraints_projected),
+        )
+
+        # augmented Lagrangian update
+        dual_equality = dual_update_mapped(equality_constraints, dual_equality, penalty)
+
+        dual_inequality = dual_update_mapped(
+            inequality_constraints, dual_inequality, penalty
+        )
+        dual_inequality = inequality_projection(dual_inequality)
+
+        penalty *= penalty_update_rate
+
+        # increment
+        iteration_ilqr += iteration
+        iteration_al += 1
+
+        return (
+            X,
+            U,
+            dual_equality,
+            dual_inequality,
+            penalty,
+            equality_constraints,
+            inequality_constraints,
+            max_constraint_violation,
+            obj,
+            gradient,
+            iteration_ilqr,
+            iteration_al,
+        )
+
+    def continuation_criteria(inputs):
+        # unpack
+        dual_inequality = inputs[3]
+        inequality_constraints = inputs[6]
+        max_constraint_violation = inputs[7]
+        iteration_al = inputs[11]
+        max_complementary_slack = np.max(
+            np.abs(inequality_constraints * dual_inequality)
+        )
+        # check maximum constraint violation and augmented Lagrangian iterations
+        return np.logical_and(
+            iteration_al < maxiter_al,
+            np.logical_or(
+                max_constraint_violation > constraints_threshold,
+                max_complementary_slack > constraints_threshold,
+            ),
+        )
+
+    return lax.while_loop(
+        continuation_criteria,
+        body,
+        (
+            X,
+            U,
+            dual_equality,
+            dual_inequality,
+            penalty,
+            equality_constraints,
+            inequality_constraints,
+            np.inf,
+            np.inf,
+            np.full(U.shape, np.inf),
+            0,
+            0,
+        ),
+    )
